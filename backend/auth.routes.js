@@ -19,35 +19,58 @@ router.post("/register", async (req, res) => {
   try {
     const { name, email, password, role = "user" } = req.body;
 
+    // Basic validation
     if (!name || !email || !password) {
-      return res.status(400).json({ message: "Name, email, and password are required" });
+      return res.status(400).json({
+        message: "Name, email, and password are required"
+      });
     }
 
-    // Public registration should never be allowed to create admin/super_admin.
-    if (role !== "user") {
-      return res.status(403).json({ message: "Public registration can only create user accounts" });
+    // Public registration hanya boleh membuat user
+    // atau psychologist.
+    if (!["user", "psychologist"].includes(role)) {
+      return res.status(403).json({
+        message: "Invalid registration role"
+      });
     }
 
     if (password.length < 8) {
-      return res.status(400).json({ message: "Password must be at least 8 characters" });
+      return res.status(400).json({
+        message: "Password must be at least 8 characters"
+      });
     }
 
     const db = await getDb();
+
     const normalizedEmail = email.trim().toLowerCase();
 
-    const existing = await db.collection("users").findOne({ email: normalizedEmail });
+    // Check duplicate email
+    const existing = await db.collection("users").findOne({
+      email: normalizedEmail
+    });
+
     if (existing) {
-      return res.status(409).json({ message: "Email already registered" });
+      return res.status(409).json({
+        message: "Email already registered"
+      });
     }
 
+    // Hash password
     const passwordHash = await bcrypt.hash(password, 12);
+
+    // Verification status ditentukan SERVER,
+    // bukan dari request user.
+    const verificationStatus =
+      role === "psychologist"
+        ? "pending"
+        : "not_required";
 
     const user = {
       name: name.trim(),
       email: normalizedEmail,
       passwordHash,
-      role: "user",
-      verificationStatus: "not_required",
+      role,
+      verificationStatus,
       isActive: true,
       createdAt: new Date(),
       updatedAt: new Date()
@@ -56,19 +79,32 @@ router.post("/register", async (req, res) => {
     const result = await db.collection("users").insertOne(user);
 
     return res.status(201).json({
-      message: "Registration successful",
+      message:
+        role === "psychologist"
+          ? "Psychologist registration submitted for verification"
+          : "Registration successful",
+
       user: {
         id: result.insertedId,
         name: user.name,
         email: user.email,
-        role: user.role
+        role: user.role,
+        verificationStatus: user.verificationStatus
       }
     });
+
   } catch (err) {
+    console.error("Registration error:", err);
+
     if (err?.code === 11000) {
-      return res.status(409).json({ message: "Email already registered" });
+      return res.status(409).json({
+        message: "Email already registered"
+      });
     }
-    return res.status(500).json({ message: "Internal server error" });
+
+    return res.status(500).json({
+      message: "Internal server error"
+    });
   }
 });
 
@@ -154,5 +190,52 @@ router.get("/me", authenticate, async (req, res) => {
     });
   }
 });
+
+router.patch(
+  "/users/:id/status",
+  authenticate,
+  authorize("admin", "super_admin"),
+  async (req, res) => {
+    try {
+      const { isActive } = req.body;
+
+      if (typeof isActive !== "boolean") {
+        return res.status(400).json({
+          message: "isActive must be boolean"
+        });
+      }
+
+      const db = await getDb();
+
+      const result = await db.collection("users").updateOne(
+        {
+          _id: new ObjectId(req.params.id)
+        },
+        {
+          $set: {
+            isActive,
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      if (!result.matchedCount) {
+        return res.status(404).json({
+          message: "User not found"
+        });
+      }
+
+      return res.json({
+        message: "User status updated"
+      });
+    } catch (error) {
+      console.error("Update user status error:", error);
+
+      return res.status(500).json({
+        message: "Failed to update user status"
+      });
+    }
+  }
+);
 
 export default router;
