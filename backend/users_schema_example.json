@@ -1,0 +1,10 @@
+{
+  "name": "Example User",
+  "email": "example@hearme.local",
+  "passwordHash": "<GENERATE_WITH_BCRYPT_DO_NOT_PUT_PLAINTEXT_PASSWORD_HERE>",
+  "role": "user",
+  "verificationStatus": "not_required",
+  "isActive": true,
+  "createdAt": "<Date>",
+  "updatedAt": "<Date>"
+}

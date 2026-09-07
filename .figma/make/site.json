@@ -1,0 +1,11 @@
+{
+  "title": "HearMee",
+  "description": "Supports users in managing mental health with features like mood tracking, digital journaling, and a self-care content library for a healthier Indonesia.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
