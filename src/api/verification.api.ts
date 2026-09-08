@@ -1,78 +1,265 @@
-import type { PsychologistVerification, VerificationDocument } from "../types";
+type VerificationDocumentPayload = {
+  type: string;
+  fileName: string;
+  fileUrl: string;
+};
 
 // ======================================================
-// ## DATABASE TEMPLATE IF CONNECTED ##
-// psychologist_verifications table:
-// id, psychologist_id, document_type, document_url, verification_status, reviewed_by, reviewed_at
-//
-// ## API TEMPLATE IF CONNECTED ##
-// File Storage: Supabase Storage / Firebase Storage / AWS S3 / Cloudinary
-// const { data } = await supabase.storage.from('verification-docs').upload(path, file)
+// BACKEND API
 // ======================================================
 
-const KEY = "hearme_verifications";
+const API_URL = "http://localhost:5000/api/verification";
 
-function all(): PsychologistVerification[] {
-  const raw = localStorage.getItem(KEY);
-  return raw ? JSON.parse(raw) : [];
+// ======================================================
+// TOKEN
+// ======================================================
+
+function getToken(): string | null {
+  return (
+    localStorage.getItem("hearme_token") ||
+    localStorage.getItem("token") ||
+    localStorage.getItem("authToken") ||
+    localStorage.getItem("accessToken")
+  );
 }
-function save(v: PsychologistVerification[]) {
-  localStorage.setItem(KEY, JSON.stringify(v));
+// ======================================================
+// REQUEST HELPER
+// ======================================================
+
+async function request<T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const token = getToken();
+
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+    ...(options.headers || {}),
+  };
+
+  if (token) {
+    (headers as Record<string, string>).Authorization =
+      `Bearer ${token}`;
+  }
+
+  const response = await fetch(
+    `${API_URL}${endpoint}`,
+    {
+      ...options,
+      headers,
+    }
+  );
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data?.message ||
+        `Request failed with status ${response.status}`
+    );
+  }
+
+  return data;
 }
+
+// ======================================================
+// BACKEND RESPONSE TYPE
+// ======================================================
+
+export interface VerificationSubmission {
+  _id: string;
+
+  psychologistId: string;
+
+  submissionNumber: number;
+
+  status:
+    | "pending"
+    | "approved"
+    | "rejected";
+
+  reason: string | null;
+
+  documents: {
+    type: string;
+    fileName: string;
+    fileUrl: string;
+  }[];
+
+  submittedAt: string;
+
+  reviewedBy: string | null;
+
+  reviewedAt: string | null;
+}
+
+export interface VerificationStatusResponse {
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    role: "psychologist";
+    verificationStatus: "pending" | "approved" | "rejected" | "unverified" | null;
+  };
+  latestSubmission: VerificationSubmission | null;
+}
+
+// ======================================================
+// VERIFICATION API
+// ======================================================
 
 export const verificationAPI = {
-  getByPsychologist: async (psychologistId: string): Promise<PsychologistVerification | null> => {
-    return all().find((v) => v.psychologistId === psychologistId) || null;
+
+  getStatus: async (): Promise<VerificationStatusResponse> => {
+    return request<VerificationStatusResponse>("/status");
   },
 
-  getAll: async (): Promise<PsychologistVerification[]> => all(),
+  // ====================================================
+  // GET OWN VERIFICATION HISTORY
+  // GET /api/verification/mine
+  // ====================================================
 
-  submit: async (psychologistId: string, documents: Omit<VerificationDocument, "id" | "uploadedAt">[]): Promise<PsychologistVerification> => {
-    // ======================================================
-    // ## DATABASE TEMPLATE IF CONNECTED ##
-    // INSERT INTO psychologist_verifications (psychologist_id, status) VALUES (?, 'pending')
-    // INSERT INTO verification_documents (verification_id, type, url) VALUES (...)
-    //
-    // ## API TEMPLATE IF CONNECTED ##
-    // Upload files to cloud storage first, then save URLs to DB
-    // ======================================================
-    const existing = all().find((v) => v.psychologistId === psychologistId);
-    const docs: VerificationDocument[] = documents.map((d) => ({
-      ...d,
-      id: `doc_${Date.now()}_${Math.random()}`,
-      uploadedAt: new Date().toISOString(),
-    }));
+  getByPsychologist: async (): Promise<VerificationSubmission[]> => {
 
-    if (existing) {
-      const updated = all().map((v) =>
-        v.psychologistId === psychologistId
-          ? { ...v, documents: docs, status: "pending" as const, submittedAt: new Date().toISOString() }
-          : v
+    const data = await request<{
+      submissions: VerificationSubmission[];
+    }>("/mine");
+
+    return data.submissions || [];
+  },
+
+  // ====================================================
+  // GET ALL VERIFICATIONS
+  // GET /api/verification
+  // ADMIN
+  // ====================================================
+
+  getAll: async (): Promise<VerificationSubmission[]> => {
+
+    const data = await request<{
+      submissions: VerificationSubmission[];
+    }>("/");
+
+    return data.submissions || [];
+  },
+
+  // ====================================================
+  // SUBMIT VERIFICATION
+  // POST /api/verification
+  // ====================================================
+
+  submit: async (
+    documents: VerificationDocumentPayload[]
+  ): Promise<VerificationSubmission> => {
+
+    if (
+      !Array.isArray(documents) ||
+      documents.length === 0
+    ) {
+      throw new Error(
+        "Documents are required"
       );
-      save(updated);
-      return updated.find((v) => v.psychologistId === psychologistId)!;
     }
 
-    const verification: PsychologistVerification = {
-      id: `ver_${Date.now()}`,
-      psychologistId,
-      documents: docs,
-      status: "pending",
-      submittedAt: new Date().toISOString(),
-    };
-    save([...all(), verification]);
-    return verification;
+    const data = await request<{
+      message: string;
+      submission: VerificationSubmission;
+    }>("/", {
+      method: "POST",
+
+      body: JSON.stringify({
+        documents: documents.map(
+          (document) => ({
+            type: document.type,
+            fileName: document.fileName,
+            fileUrl: document.fileUrl,
+          })
+        ),
+      }),
+    });
+
+    return data.submission;
   },
 
-  review: async (verificationId: string, status: "approved" | "rejected", notes?: string): Promise<PsychologistVerification> => {
-    // ## DATABASE TEMPLATE IF CONNECTED ##
-    // UPDATE psychologist_verifications SET status = ?, reviewed_by = ?, reviewed_at = NOW(), notes = ? WHERE id = ?
-    const updated = all().map((v) =>
-      v.id === verificationId
-        ? { ...v, status, notes, reviewedBy: "admin", reviewedAt: new Date().toISOString() }
-        : v
+  // ====================================================
+  // ADMIN REVIEW
+  // PATCH /api/verification/:id/review
+  // ====================================================
+
+  review: async (
+    verificationId: string,
+    status:
+      | "approved"
+      | "rejected",
+    notes?: string
+  ): Promise<VerificationSubmission> => {
+
+    if (!verificationId) {
+      throw new Error(
+        "Verification ID is required"
+      );
+    }
+
+    if (
+      !["approved", "rejected"].includes(
+        status
+      )
+    ) {
+      throw new Error(
+        "Invalid verification status"
+      );
+    }
+
+    if (
+      status === "rejected" &&
+      !notes?.trim()
+    ) {
+      throw new Error(
+        "Reason is required when rejecting verification"
+      );
+    }
+
+    await request<{
+      message: string;
+      reason: string | null;
+    }>(
+      `/${verificationId}/review`,
+      {
+        method: "PATCH",
+
+        body: JSON.stringify({
+          status,
+
+          ...(status === "rejected"
+            ? {
+                reason:
+                  notes?.trim() || "",
+              }
+            : {}),
+        }),
+      }
     );
-    save(updated);
-    return updated.find((v) => v.id === verificationId)!;
+
+    // ==================================================
+    // Ambil ulang submission setelah direview
+    // ==================================================
+
+    const submissions =
+      await verificationAPI.getAll();
+
+    const updated =
+      submissions.find(
+        (submission) =>
+          submission._id ===
+          verificationId
+      );
+
+    if (!updated) {
+      throw new Error(
+        "Updated verification submission not found"
+      );
+    }
+
+    return updated;
   },
 };

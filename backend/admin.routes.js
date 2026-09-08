@@ -378,4 +378,45 @@ router.patch(
   }
 );
 
+/*
+|--------------------------------------------------------------------------
+| ADMIN - GET PSYCHOLOGISTS
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/psychologists",
+  authenticate,
+  authorize("admin", "super_admin"),
+  async (req, res) => {
+    try {
+      const db = await getDb();
+
+      const psychologists = await db
+        .collection("users")
+        .find(
+          { role: "psychologist" },
+          {
+            projection: {
+              passwordHash: 0
+            }
+          }
+        )
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      return res.json({
+        psychologists
+      });
+
+    } catch (error) {
+      console.error("Get psychologists error:", error);
+
+      return res.status(500).json({
+        message: "Failed to get psychologists"
+      });
+    }
+  }
+);
+
 export default router;

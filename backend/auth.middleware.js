@@ -25,3 +25,25 @@ export function authorize(...allowedRoles) {
     next();
   };
 }
+
+export function requireVerifiedPsychologist(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({
+      message: "Authentication required"
+    });
+  }
+
+  if (req.user.role !== "psychologist") {
+    return res.status(403).json({
+      message: "Psychologist access only"
+    });
+  }
+
+  if (req.user.verificationStatus !== "approved") {
+    return res.status(403).json({
+      message: "Psychologist account is not verified"
+    });
+  }
+
+  next();
+}

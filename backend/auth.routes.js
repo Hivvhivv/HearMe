@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { getDb } from "./db.js";
 import { ObjectId } from "mongodb";
-import { authenticate, authorize } from "./auth.middleware.js";
+import { authenticate, authorize, requireVerifiedPsychologist } from "./auth.middleware.js";
 const router = express.Router();
 
 router.get("/test", (req, res) => {
@@ -17,12 +17,35 @@ const allowedRoles = ["user", "psychologist", "admin", "super_admin"];
 
 router.post("/register", async (req, res) => {
   try {
-    const { name, email, password, role = "user" } = req.body;
+    const {
+      name,
+      username,
+      gender,
+      birthDate,
+      birthday,
+      phoneNumber,
+      contact,
+      email,
+      password,
+      confirmPassword,
+      role = "user"
+    } = req.body || {};
+
+    const normalizedEmail = typeof email === "string"
+      ? email.trim().toLowerCase()
+      : "";
+    const normalizedUsername = typeof username === "string"
+      ? username.trim()
+      : typeof name === "string"
+        ? name.trim()
+        : "";
+    const normalizedBirthDate = birthDate || birthday;
+    const normalizedPhoneNumber = phoneNumber || contact;
 
     // Basic validation
-    if (!name || !email || !password) {
+    if (!normalizedUsername || !normalizedEmail || !password) {
       return res.status(400).json({
-        message: "Name, email, and password are required"
+        message: "Username, email, and password are required"
       });
     }
 
@@ -34,15 +57,33 @@ router.post("/register", async (req, res) => {
       });
     }
 
+    if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) {
+      return res.status(400).json({ message: "Invalid email format" });
+    }
+
     if (password.length < 8) {
       return res.status(400).json({
         message: "Password must be at least 8 characters"
       });
     }
 
-    const db = await getDb();
+    if (confirmPassword !== undefined && password !== confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match" });
+    }
 
-    const normalizedEmail = email.trim().toLowerCase();
+    if (role === "psychologist") {
+      if (!gender || !normalizedBirthDate || !normalizedPhoneNumber) {
+        return res.status(400).json({
+          message: "Gender, birth date, and phone number are required for psychologists"
+        });
+      }
+
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedBirthDate)) {
+        return res.status(400).json({ message: "Birth date must use YYYY-MM-DD format" });
+      }
+    }
+
+    const db = await getDb();
 
     // Check duplicate email
     const existing = await db.collection("users").findOne({
@@ -55,6 +96,14 @@ router.post("/register", async (req, res) => {
       });
     }
 
+    const existingUsername = await db.collection("users").findOne({
+      username: normalizedUsername
+    });
+
+    if (existingUsername) {
+      return res.status(409).json({ message: "Username already registered" });
+    }
+
     // Hash password
     const passwordHash = await bcrypt.hash(password, 12);
 
@@ -62,15 +111,21 @@ router.post("/register", async (req, res) => {
     // bukan dari request user.
     const verificationStatus =
       role === "psychologist"
-        ? "pending"
+        ? "unverified"
         : "not_required";
 
     const user = {
-      name: name.trim(),
+      name: normalizedUsername,
+      username: normalizedUsername,
       email: normalizedEmail,
       passwordHash,
       role,
       verificationStatus,
+      ...(role === "psychologist" ? {
+        gender,
+        birthDate: normalizedBirthDate,
+        phoneNumber: normalizedPhoneNumber
+      } : {}),
       isActive: true,
       createdAt: new Date(),
       updatedAt: new Date()
@@ -81,13 +136,17 @@ router.post("/register", async (req, res) => {
     return res.status(201).json({
       message:
         role === "psychologist"
-          ? "Psychologist registration submitted for verification"
+          ? "Psychologist registration successful"
           : "Registration successful",
 
       user: {
         id: result.insertedId,
         name: user.name,
+        username: user.username,
         email: user.email,
+        gender: user.gender,
+        birthDate: user.birthDate,
+        phoneNumber: user.phoneNumber,
         role: user.role,
         verificationStatus: user.verificationStatus
       }
@@ -147,7 +206,11 @@ router.post("/login", async (req, res) => {
       user: {
         id: user._id,
         name: user.name,
+        username: user.username,
         email: user.email,
+        gender: user.gender,
+        birthDate: user.birthDate,
+        phoneNumber: user.phoneNumber,
         role: user.role,
         verificationStatus: user.verificationStatus
       }
@@ -157,6 +220,7 @@ router.post("/login", async (req, res) => {
   }
 });
 
+   // Verification user ini 
 router.get("/me", authenticate, async (req, res) => {
   try {
     const db = await getDb();
@@ -233,6 +297,69 @@ router.patch(
 
       return res.status(500).json({
         message: "Failed to update user status"
+      });
+    }
+  }
+);
+
+
+//Verification psychologist ini
+router.get(
+  "/psychologist-test",
+  authenticate,
+  requireVerifiedPsychologist,
+  async (req, res) => {
+    return res.json({
+      ok: true,
+      message: "Psychologist access granted",
+      user: req.user
+    });
+  }
+);
+
+router.patch(
+  "/psychologists/:id/verification",
+  authenticate,
+  authorize("admin", "super_admin"),
+  async (req, res) => {
+    try {
+      const { status } = req.body;
+
+      if (!["approved", "rejected", "pending"].includes(status)) {
+        return res.status(400).json({
+          message: "Invalid verification status"
+        });
+      }
+
+      const db = await getDb();
+
+      const result = await db.collection("users").updateOne(
+        {
+          _id: new ObjectId(req.params.id),
+          role: "psychologist"
+        },
+        {
+          $set: {
+            verificationStatus: status,
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      if (!result.matchedCount) {
+        return res.status(404).json({
+          message: "Psychologist account not found"
+        });
+      }
+
+      return res.json({
+        message: `Psychologist ${status}`
+      });
+    } catch (error) {
+      console.error("Update psychologist verification error:", error);
+
+      return res.status(500).json({
+        message: "Failed to update psychologist verification"
       });
     }
   }

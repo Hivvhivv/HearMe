@@ -1,213 +1,488 @@
 // ======================================================
-// ## DATABASE TEMPLATE IF CONNECTED ##
-// These types map 1:1 to database table schemas.
-// Replace localStorage mock with Supabase / PostgreSQL / MySQL / Firebase / MongoDB
+// DATABASE TYPES
 // ======================================================
 
-export type UserRole = "user" | "psychologist" | "admin";
+export type UserRole =
+  | "user"
+  | "psychologist"
+  | "admin"
+  | "super_admin";
+
+
+// ======================================================
+// USERS
+// ======================================================
 
 export interface User {
   id: string;
+
   name: string;
+
   username?: string;
+
   email: string;
+
   gender?: string;
+
   birthday?: string;
+
+  birthDate?: string;
+
   contact?: string;
+
+  phoneNumber?: string;
+
   avatar?: string;
+
   role: UserRole;
+
+  verificationStatus?:
+    | "pending"
+    | "approved"
+    | "rejected"
+    | "unverified"
+    | "not_required";
+
+  isActive?: boolean;
+
   createdAt: string;
+
+  updatedAt?: string;
 }
+
+
+// ======================================================
+// PSYCHOLOGIST
+// ======================================================
 
 export interface Psychologist {
   id: string;
+
   name: string;
+
   specialization: string;
+
   rating: number;
+
   consultations: string;
+
   experience: string;
+
   price: string;
+
   available: boolean;
+
   avatar: string;
+
   bio: string;
+
   schedule: string[];
+
   tags: string[];
-  verificationStatus: "pending" | "approved" | "rejected";
+
+  verificationStatus:
+    | "pending"
+    | "approved"
+    | "rejected";
 }
 
-// psychologist_verifications table
+
+// ======================================================
+// PSYCHOLOGIST VERIFICATION SUBMISSIONS
+// ======================================================
+
 export interface PsychologistVerification {
   id: string;
+
   psychologistId: string;
+
+  submissionNumber?: number;
+
   documents: VerificationDocument[];
-  status: "pending" | "approved" | "rejected";
+
+  status:
+    | "pending"
+    | "approved"
+    | "rejected";
+
+  reason?: string | null;
+
   reviewedBy?: string;
+
   reviewedAt?: string;
-  notes?: string;
+
   submittedAt: string;
 }
 
+
+// ======================================================
+// VERIFICATION DOCUMENT
+// ======================================================
+
 export interface VerificationDocument {
   id: string;
-  type: "ktp" | "str" | "sip" | "certificate";
+
+  type:
+    | "ktp"
+    | "str"
+    | "sip"
+    | "certificate";
+
   label: string;
-  url: string;        // base64 or storage URL
+
+  url: string;
+
   uploadedAt: string;
+
+  // Backend fields
+  fileName?: string;
+
+  fileUrl?: string;
 }
 
-// consultations table
+
+// ======================================================
+// CONSULTATIONS
+// ======================================================
+
 export interface Consultation {
   id: string;
+
   userId?: string;
+
   userName?: string;
+
   psychologistId: string;
+
   psychologistName: string;
+
   psychologistAvatar?: string;
+
   specialization?: string;
+
   date: string;
+
   time: string;
-  status: "pending" | "approved" | "upcoming" | "active" | "completed" | "cancelled" | "rejected";
-  paymentStatus?: "pending" | "paid" | "failed" | "expired" | "refunded";
+
+  status:
+    | "pending"
+    | "approved"
+    | "upcoming"
+    | "active"
+    | "completed"
+    | "cancelled"
+    | "rejected";
+
+  paymentStatus?:
+    | "pending"
+    | "paid"
+    | "failed"
+    | "expired"
+    | "refunded";
+
   paymentMethod?: string;
+
   avatar?: string;
+
   fee?: number | string;
+
   notes?: string;
+
   createdAt?: string;
 }
 
-// consultation_messages table
+
+// ======================================================
+// CONSULTATION MESSAGES
+// ======================================================
+
 export interface ConsultationMessage {
   id: string;
+
   consultationId: string;
+
   senderId?: string;
+
   senderName?: string;
-  sender?: "user" | "psychologist";
+
+  sender?:
+    | "user"
+    | "psychologist";
+
   content?: string;
+
   text?: string;
-  type?: "text" | "image" | "file";
+
+  type?:
+    | "text"
+    | "image"
+    | "file";
+
   time?: string;
+
   createdAt?: string;
 }
 
-// payments table
+
+// ======================================================
+// PAYMENTS
+// ======================================================
+
 export interface Payment {
   id: string;
+
   consultationId: string;
+
   amount: number;
-  method: "bank_transfer" | "e_wallet" | "qris";
-  status: "pending" | "paid" | "failed" | "expired" | "refunded";
+
+  method:
+    | "bank_transfer"
+    | "e_wallet"
+    | "qris";
+
+  status:
+    | "pending"
+    | "paid"
+    | "failed"
+    | "expired"
+    | "refunded";
+
   createdAt: string;
+
   paidAt?: string;
+
   externalId?: string;
 }
 
-// mood_logs table
+
+// ======================================================
+// MOOD LOGS
+// ======================================================
+
 export interface MoodLog {
   id: string;
+
   userId: string;
-  date: string;       // YYYY-MM-DD
+
+  date: string;
+
   mood: string;
+
   note?: string;
+
   createdAt: string;
 }
 
-// journal_entries table
+
+// ======================================================
+// JOURNAL ENTRIES
+// ======================================================
+
 export interface JournalEntry {
   id: string;
+
   userId: string;
+
   title: string;
+
   content: string;
+
   mood: string;
-  images: string[];   // base64 previews or storage URLs
+
+  images: string[];
+
   createdAt: string;
 }
 
-// journal_images table
+
+// ======================================================
+// JOURNAL IMAGES
+// ======================================================
+
 export interface JournalImage {
   id: string;
+
   journalId: string;
+
   imageUrl: string;
+
   createdAt: string;
 }
 
-// forum_posts table
+
+// ======================================================
+// FORUM POSTS
+// ======================================================
+
 export interface ForumPost {
   id: string;
+
   authorId: string;
+
   author: string;
+
   avatar: string;
+
   category: string;
+
   title: string;
+
   excerpt: string;
+
   content?: string;
+
   likes: number;
+
   comments: number;
+
   time: string;
+
   liked: boolean;
+
   saved?: boolean;
+
   archived?: boolean;
+
   isAnonymous: boolean;
-  visibility: "public" | "private";
+
+  visibility:
+    | "public"
+    | "private";
 }
 
-// forum_bans table
+
+// ======================================================
+// FORUM BANS
+// ======================================================
+
 export interface ForumBan {
   id: string;
+
   userId: string;
+
   userName: string;
+
   reason: string;
-  duration: "1d" | "3d" | "7d" | "30d" | "permanent";
+
+  duration:
+    | "1d"
+    | "3d"
+    | "7d"
+    | "30d"
+    | "permanent";
+
   bannedAt: string;
+
   expiresAt?: string;
+
   bannedBy: string;
 }
 
-// ai_sessions table
+
+// ======================================================
+// AI SESSIONS
+// ======================================================
+
 export interface AISession {
   id: string;
+
   userId: string;
-  mode?: "text" | "voice";
-  type?: "text" | "voice";
-  status?: "active" | "ended";
+
+  mode?:
+    | "text"
+    | "voice";
+
+  type?:
+    | "text"
+    | "voice";
+
+  status?:
+    | "active"
+    | "ended";
+
   messages?: AIMessage[];
+
   recap?: AISessionRecap;
+
   createdAt: string;
+
   endedAt?: string;
 }
 
+
+// ======================================================
+// AI MESSAGES
+// ======================================================
+
 export interface AIMessage {
   id: string;
+
   sessionId?: string;
-  role?: "user" | "assistant";
-  // legacy
-  type?: "user" | "ai";
+
+  role?:
+    | "user"
+    | "assistant";
+
+  // Legacy
+  type?:
+    | "user"
+    | "ai";
+
   content?: string;
+
   text?: string;
+
   time?: string;
+
   createdAt?: string;
 }
 
-// ai session recap
+
+// ======================================================
+// AI SESSION RECAP
+// ======================================================
+
 export interface AISessionRecap {
   title: string;
+
   summary: string;
+
   dominantEmotion: string;
+
   suggestions: string[];
+
   duration?: number;
+
   messageCount?: number;
 }
 
-// notifications table
+
+// ======================================================
+// NOTIFICATIONS
+// ======================================================
+
 export interface Notification {
   id: string;
+
   userId: string;
+
   type: NotificationType;
+
   title: string;
+
   message: string;
+
   read: boolean;
+
   link?: string;
+
   createdAt: string;
 }
+
+
+// ======================================================
+// NOTIFICATION TYPES
+// ======================================================
 
 export type NotificationType =
   | "consultation_approved"
@@ -221,16 +496,31 @@ export type NotificationType =
   | "forum_unban"
   | "new_message";
 
-// mind_hub_contents table (admin managed)
+
+// ======================================================
+// MIND HUB CONTENT
+// ======================================================
+
 export interface MindHubContent {
   id: string;
-  category: "Mind and Balance" | "Self-Care Corner";
+
+  category:
+    | "Mind and Balance"
+    | "Self-Care Corner";
+
   title: string;
+
   excerpt: string;
+
   content: string;
+
   image: string;
+
   duration: string;
+
   published?: boolean;
+
   createdAt?: string;
+
   updatedAt?: string;
 }

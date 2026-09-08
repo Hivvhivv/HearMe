@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom"
 import { Eye, EyeOff, ArrowLeft } from "lucide-react"
 import PublicNavbar from "../components/PublicNavbar"
 import type { AppRole } from "../services"
+import { authAPI } from "../api/auth.api"
 
 interface FormData {
   username: string
@@ -78,6 +79,8 @@ export default function SignUpPage() {
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>(
     {},
   )
+  const [submitError, setSubmitError] = useState("")
+  const [submitting, setSubmitting] = useState(false)
 
   const updateField = (field: keyof FormData, value: string) => {
     setForm((prev) => ({
@@ -135,30 +138,40 @@ export default function SignUpPage() {
     return Object.keys(newErrors).length === 0
   }
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
 
     if (!validate()) return
 
-    localStorage.setItem(
-      "hearme_user",
-      JSON.stringify({
-        name: form.username,
-        email: form.email,
+    setSubmitError("")
+    setSubmitting(true)
+
+    try {
+      await authAPI.register({
+        username: form.username.trim(),
         gender: form.gender,
-        birthday: form.birthday,
-        contact: form.contact,
-        role: appRole,
-      }),
-    )
+        birthDate: form.birthday,
+        email: form.email.trim(),
+        password: form.password,
+        confirmPassword: form.confirm,
+        phoneNumber: form.contact.trim(),
+        role: appRole === "psychologist" ? "psychologist" : "user",
+      })
 
-    localStorage.setItem("hearme_auth", "true")
-    localStorage.setItem("hearme_role", appRole)
-
-    if (appRole === "psychologist") {
-      navigate("/psychologist/verification")
-    } else {
-      navigate("/dashboard")
+      // Register tidak membuat session palsu. User login untuk menerima JWT,
+      // lalu psikolog dapat membuka halaman verifikasi dengan token tersebut.
+      navigate("/sign-in", {
+        replace: true,
+        state: { registeredEmail: form.email.trim() },
+      })
+    } catch (error) {
+      setSubmitError(
+        error instanceof Error
+          ? error.message
+          : "Gagal membuat akun. Silakan coba lagi.",
+      )
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -188,6 +201,11 @@ export default function SignUpPage() {
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {submitError && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {submitError}
+              </div>
+            )}
             <Field
               label="Username"
               name="username"
@@ -295,9 +313,10 @@ export default function SignUpPage() {
 
             <button
               type="submit"
-              className="w-full bg-[#6F3FB5] hover:bg-[#5f34a1] text-white font-semibold py-3 rounded-xl transition-colors"
+              disabled={submitting}
+              className="w-full bg-[#6F3FB5] hover:bg-[#5f34a1] disabled:bg-purple-300 text-white font-semibold py-3 rounded-xl transition-colors"
             >
-              Create Account
+              {submitting ? "Membuat akun..." : "Create Account"}
             </button>
           </form>
         </div>

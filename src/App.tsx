@@ -33,6 +33,7 @@ import PsychologistConsultationRoomPage from "./pages/psychologist/PsychologistC
 import PsychologistChatPage from "./pages/psychologist/PsychologistChatPage";
 import PsychologistConsultationsPage from "./pages/psychologist/PsychologistConsultationsPage";
 import PsychologistUpcomingPage from "./pages/psychologist/PsychologistUpcomingPage";
+import PsychologistProfilePage from "./pages/psychologist/PsychologistProfilePage";
 import AdminLoginPage from "./pages/admin/AdminLoginPage";
 import AdminDashboardPage from "./pages/admin/AdminDashboardPage";
 import AdminForumPage from "./pages/admin/AdminForumPage";
@@ -153,6 +154,7 @@ export default function App() {
         <Route path="/psychologist/schedule" element={<PsychologistRoute requiresVerification><PsychologistSchedulePage /></PsychologistRoute>} />
         <Route path="/psychologist/consultation/:id" element={<PsychologistRoute requiresVerification><PsychologistChatPage /></PsychologistRoute>} />
         <Route path="/psychologist/consultation-mgmt/:id" element={<PsychologistRoute><PsychologistConsultationRoomPage /></PsychologistRoute>} />
+        <Route path="/psychologist/profile"element={<PsychologistProfilePage />}/>
 
         {/* Admin — own session guard */}
         <Route path="/admin/login" element={<AdminLoginPage />} />

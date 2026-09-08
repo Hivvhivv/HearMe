@@ -4,38 +4,113 @@
 // Example: Firebase Firestore / Supabase / MySQL / PostgreSQL / MongoDB
 // ======================================================
 
-import { psychologists as mockPsychologists, forumPosts as mockForumPosts, articles as mockArticles, consultations as mockConsultations } from "../data/mockData";
+import {
+  psychologists as mockPsychologists,
+  forumPosts as mockForumPosts,
+  articles as mockArticles,
+  consultations as mockConsultations
+} from "../data/mockData";
+import { consultationAPI } from "../api/consultation.api";
 
 export type AppRole = "user" | "psychologist" | "admin";
 
+// ======================================================
 // AUTH SERVICE
+// ======================================================
+
 export const authService = {
-  login: async (email: string, _password: string, role?: AppRole) => {
-    // ======================================================
-    // ## DATABASE TEMPLATE IF CONNECTED ##
-    // const user = await database.users.findOne({ email, password });
-    // const role = user.role;
-    // ======================================================
-    const savedRole = role || (localStorage.getItem("hearme_role") as AppRole) || "user";
-    localStorage.setItem("hearme_auth", "true");
-    localStorage.setItem("hearme_role", savedRole);
-    const existing = localStorage.getItem("hearme_user");
-    if (!existing) localStorage.setItem("hearme_user", JSON.stringify({ name: "Inof", email, role: savedRole }));
-    return { email, role: savedRole };
+  login: async (email: string, password: string, role?: AppRole) => {
+    try {
+      const response = await fetch(
+        "http://localhost:5000/api/auth/login",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            email,
+            password,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.message || "Email atau password salah"
+        );
+      }
+
+      const user = data.user;
+
+      localStorage.setItem("hearme_auth", "true");
+      localStorage.setItem("hearme_role", user.role);
+      localStorage.setItem("hearme_user", JSON.stringify(user));
+      localStorage.setItem("hearme_token", data.token);
+
+      return {
+        email: user.email,
+        role: user.role as AppRole,
+        user,
+        token: data.token,
+      };
+
+    } catch (error) {
+      console.error("Login error:", error);
+
+      throw new Error(
+        error instanceof Error
+          ? error.message
+          : "Login gagal"
+      );
+    }
   },
+
   logout: () => {
     localStorage.removeItem("hearme_auth");
     localStorage.removeItem("hearme_role");
+    localStorage.removeItem("hearme_user");
+    localStorage.removeItem("hearme_token");
   },
-  isAuthenticated: () => !!localStorage.getItem("hearme_auth"),
-  getRole: (): AppRole => (localStorage.getItem("hearme_role") as AppRole) || "user",
-  isRole: (role: AppRole) => authService.getRole() === role,
+
+  isAuthenticated: () => {
+    return !!localStorage.getItem("hearme_auth");
+  },
+
+  getRole: (): AppRole => {
+    return (
+      (localStorage.getItem("hearme_role") as AppRole) ||
+      "user"
+    );
+  },
+
+  isRole: (role: AppRole) => {
+    return authService.getRole() === role;
+  },
+
   getUser: () => {
     const saved = localStorage.getItem("hearme_user");
     return saved ? JSON.parse(saved) : null;
   },
+
+  getToken: () => {
+    return localStorage.getItem("hearme_token");
+  },
+
   updateUser: (data: Record<string, string>) => {
-    localStorage.setItem("hearme_user", JSON.stringify(data));
+    const current = authService.getUser();
+
+    const updated = {
+      ...current,
+      ...data,
+    };
+
+    localStorage.setItem(
+      "hearme_user",
+      JSON.stringify(updated)
+    );
   },
 };
 
@@ -54,32 +129,13 @@ export const psychologistService = {
 export const consultationService = {
   getAll: async () => {
     // ## DATABASE TEMPLATE IF CONNECTED ## → SELECT * FROM consultations WHERE user_id = ?
-    const saved = localStorage.getItem("hearme_consultations");
-    return saved ? JSON.parse(saved) : mockConsultations;
+    return consultationAPI.getMyConsultations();
   },
   book: async (data: { psychologistId: string; date: string; time: string; psychologistName?: string; psychologistAvatar?: string; fee?: number }) => {
-    const all = await consultationService.getAll();
-    const psych = mockPsychologists.find((p) => p.id === data.psychologistId);
-    const newConsult = {
-      id: `c${Date.now()}`,
-      psychologistName: data.psychologistName || psych?.name || "Psikolog",
-      psychologistAvatar: data.psychologistAvatar || psych?.avatar || "",
-      specialization: psych?.specialization || "",
-      date: data.date,
-      time: data.time,
-      status: "pending" as const,
-      paymentStatus: "pending" as const,
-      avatar: data.psychologistAvatar || psych?.avatar || "",
-      fee: data.fee || 150000,
-    };
-    const updated = [newConsult, ...all];
-    localStorage.setItem("hearme_consultations", JSON.stringify(updated));
-    return newConsult;
+    return consultationAPI.createConsultation({ psychologistId: data.psychologistId, date: data.date, time: data.time });
   },
   cancel: async (id: string) => {
-    const all = await consultationService.getAll();
-    const updated = all.map((c: { id: string; status: string }) => c.id === id ? { ...c, status: "cancelled" } : c);
-    localStorage.setItem("hearme_consultations", JSON.stringify(updated));
+    await consultationAPI.cancel(id);
   },
   // ## DATABASE TEMPLATE IF CONNECTED ## → SELECT * FROM consultations WHERE psychologist_id = ?
   getPsychologistConsultations: async (psychologistId = "p1") => {
