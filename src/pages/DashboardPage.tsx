@@ -99,9 +99,6 @@ const moodConfig: Record<
 
 // ======================================================
 // DATE HELPER
-//
-// Jangan menggunakan toISOString() untuk tanggal lokal,
-// karena timezone UTC dapat membuat tanggal bergeser.
 // ======================================================
 
 function formatDateKey(date: Date): string {
@@ -167,6 +164,7 @@ function getLast7Days(): {
 // ======================================================
 
 export default function DashboardPage() {
+
   // ====================================================
   // MOOD MODAL
   // ====================================================
@@ -177,13 +175,6 @@ export default function DashboardPage() {
 
   // ====================================================
   // MOOD DATA
-  //
-  // Format:
-  //
-  // {
-  //   "2026-09-10": "happy",
-  //   "2026-09-15": "sad"
-  // }
   // ====================================================
 
   const [moodLogs, setMoodLogs] =
@@ -216,10 +207,32 @@ export default function DashboardPage() {
   // USER
   // ====================================================
 
-  const user = authService.getUser();
+  const user =
+    authService.getUser();
 
   const name =
     user?.name || "User";
+
+
+  // ====================================================
+  // CURRENT AUTH TOKEN
+  // ====================================================
+  //
+  // Token digunakan sebagai dependency agar ketika
+  // user login dengan akun berbeda, Dashboard mengambil
+  // ulang data Daily Mood.
+  //
+  // User A:
+  // token A
+  //
+  // User B:
+  // token B
+  //
+  // token berubah → effect dijalankan kembali.
+  // ====================================================
+
+  const currentToken =
+    authService.getToken();
 
 
   // ====================================================
@@ -238,79 +251,153 @@ export default function DashboardPage() {
   // ====================================================
 
   useEffect(() => {
+
     let cancelled = false;
 
+
     async function loadMoodHistory() {
+
       try {
+
         setMoodLoading(true);
+
         setMoodError("");
 
-        /*
-        ==================================================
-        DATABASE FLOW
 
-        Dashboard
-          ↓
-        dailyMoodApi
-          ↓
-        GET /api/daily-moods/history
-          ↓
-        Bearer JWT
-          ↓
-        Backend
-          ↓
-        MongoDB
-        ==================================================
-        */
+        // ------------------------------------------------
+        // RESET DATA LAMA
+        // ------------------------------------------------
+        //
+        // Sangat penting ketika user berganti akun.
+        //
+        // Jangan biarkan mood user sebelumnya tetap
+        // tampil sementara data user baru sedang diambil.
+        // ------------------------------------------------
+
+        setMoodLogs({});
+
+
+        // ------------------------------------------------
+        // CHECK LOGIN
+        // ------------------------------------------------
+
+        if (!currentToken) {
+
+          setMoodLoading(false);
+
+          return;
+
+        }
+
+
+        // ------------------------------------------------
+        // GET MOOD HISTORY
+        // ------------------------------------------------
+        //
+        // Data berasal dari:
+        //
+        // Dashboard
+        //   ↓
+        // dailyMoodApi
+        //   ↓
+        // GET /api/daily-moods/history
+        //   ↓
+        // Bearer JWT
+        //   ↓
+        // Backend
+        //   ↓
+        // MongoDB
+        //
+        // Backend menentukan user berdasarkan:
+        //
+        // req.user.sub
+        // ------------------------------------------------
 
         const moods =
           await dailyMoodApi.getMoodHistory(7);
 
+
         if (cancelled) {
           return;
         }
+
+
+        // ------------------------------------------------
+        // CONVERT ARRAY TO MAP
+        // ------------------------------------------------
 
         const moodMap: Record<
           string,
           string
         > = {};
 
+
         moods.forEach(
           (item: DailyMood) => {
+
             moodMap[item.date] =
               item.mood;
+
           }
         );
 
-        setMoodLogs(moodMap);
+
+        // ------------------------------------------------
+        // SAVE MOOD DATA FOR CURRENT USER
+        // ------------------------------------------------
+
+        setMoodLogs(
+          moodMap
+        );
+
 
       } catch (error) {
+
         console.error(
           "Failed to load daily mood:",
           error
         );
 
+
         if (!cancelled) {
+
+          // Jangan pertahankan data user sebelumnya
+          setMoodLogs({});
+
+
           setMoodError(
             error instanceof Error
               ? error.message
               : "Gagal mengambil data mood"
           );
+
         }
 
+
       } finally {
+
         if (!cancelled) {
+
           setMoodLoading(false);
+
         }
+
       }
+
     }
+
 
     loadMoodHistory();
 
+
     return () => {
+
       cancelled = true;
+
     };
-  }, []);
+
+
+  }, [currentToken]);
 
 
   // ====================================================
@@ -320,32 +407,26 @@ export default function DashboardPage() {
   const handleSaveMood = async (
     mood: string
   ) => {
+
     try {
+
       setMoodError("");
 
-      /*
-      ==================================================
-      SAVE / UPDATE
 
-      Jika hari ini belum punya mood:
-        INSERT
-
-      Jika hari ini sudah punya mood:
-        UPDATE
-
-      Backend menggunakan:
-        userId + date
-
-      sehingga satu user hanya mempunyai
-      satu mood untuk satu tanggal.
-      ==================================================
-      */
+      // ------------------------------------------------
+      // SAVE TO MONGODB
+      // ------------------------------------------------
 
       const savedMood =
         await dailyMoodApi.saveTodayMood(
           mood,
           todayKey
         );
+
+
+      // ------------------------------------------------
+      // UPDATE CURRENT USER'S STATE
+      // ------------------------------------------------
 
       setMoodLogs(
         (previous) => ({
@@ -355,20 +436,26 @@ export default function DashboardPage() {
         })
       );
 
+
       setShowMoodModal(false);
 
+
     } catch (error) {
+
       console.error(
         "Failed to save daily mood:",
         error
       );
+
 
       setMoodError(
         error instanceof Error
           ? error.message
           : "Gagal menyimpan mood"
       );
+
     }
+
   };
 
 
@@ -377,16 +464,23 @@ export default function DashboardPage() {
   // ====================================================
 
   const sendReflection = () => {
+
     if (!reflection.trim()) {
       return;
     }
 
+
     setReflectionSent(true);
 
+
     setTimeout(() => {
+
       setReflectionSent(false);
+
       setReflection("");
+
     }, 3000);
+
   };
 
 
@@ -395,11 +489,14 @@ export default function DashboardPage() {
   // ====================================================
 
   return (
+
     <div className="min-h-screen bg-[#FAF8FD]">
 
       <DashboardNavbar />
 
+
       <main className="max-w-7xl mx-auto px-4 py-8 space-y-8">
+
 
         {/* ==================================================
             HERO
@@ -413,6 +510,7 @@ export default function DashboardPage() {
               viewBox="0 0 200 200"
               fill="none"
             >
+
               <circle
                 cx="150"
                 cy="50"
@@ -426,15 +524,18 @@ export default function DashboardPage() {
                 r="80"
                 fill="white"
               />
+
             </svg>
 
           </div>
+
 
           <div className="relative grid md:grid-cols-2 gap-8 items-center">
 
             <div>
 
               <p className="text-purple-200 text-sm mb-1">
+
                 {new Date().toLocaleDateString(
                   "id-ID",
                   {
@@ -444,19 +545,31 @@ export default function DashboardPage() {
                     year: "numeric",
                   }
                 )}
+
               </p>
+
 
               <h1 className="text-3xl font-bold mb-2">
+
                 Hi {name},
+
                 <br />
+
                 Nice to meet you again!
+
               </h1>
 
+
               <p className="text-purple-200 text-sm mb-6">
+
                 Tell us about your emotions today,
+
                 <br />
+
                 we're ready to listen!
+
               </p>
+
 
               <div className="flex gap-2">
 
@@ -470,32 +583,45 @@ export default function DashboardPage() {
                   }
                   placeholder="How are you feeling today?"
                   onKeyDown={(event) => {
+
                     if (
                       event.key === "Enter"
                     ) {
+
                       sendReflection();
+
                     }
+
                   }}
                   className="flex-1 bg-white/20 backdrop-blur placeholder-purple-200 text-white text-sm px-4 py-3 rounded-xl border border-white/20 focus:outline-none focus:border-white/60 transition-colors"
                 />
+
 
                 <button
                   onClick={sendReflection}
                   className="bg-white text-[#6F3FB5] p-3 rounded-xl hover:bg-purple-50 transition-colors"
                 >
+
                   <Send size={18} />
+
                 </button>
 
               </div>
 
+
               {reflectionSent && (
+
                 <div className="mt-3 bg-white/20 text-white text-sm px-4 py-2 rounded-xl animate-fade-in">
+
                   ✨ Terima kasih sudah berbagi!
                   Kami selalu di sini untukmu.
+
                 </div>
+
               )}
 
             </div>
+
 
             <div className="hidden md:flex justify-end">
 
@@ -521,11 +647,16 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between mb-4">
 
             <h2 className="text-lg font-bold text-gray-900">
+
               Daily Mood Log
+
             </h2>
 
+
             <span className="text-xs text-gray-400">
+
               7 hari terakhir
+
             </span>
 
           </div>
@@ -534,18 +665,26 @@ export default function DashboardPage() {
           {/* LOADING */}
 
           {moodLoading && (
+
             <div className="text-xs text-gray-400 mb-3">
+
               Memuat mood...
+
             </div>
+
           )}
 
 
           {/* ERROR */}
 
           {moodError && (
+
             <div className="mb-3 bg-red-50 border border-red-100 text-red-600 text-xs px-4 py-3 rounded-xl">
+
               {moodError}
+
             </div>
+
           )}
 
 
@@ -556,15 +695,19 @@ export default function DashboardPage() {
               const mood =
                 moodLogs[day.key];
 
+
               const isToday =
                 day.key === todayKey;
+
 
               const cfg =
                 mood
                   ? moodConfig[mood]
                   : null;
 
+
               return (
+
                 <div
                   key={day.key}
                   className={`
@@ -581,11 +724,16 @@ export default function DashboardPage() {
                 >
 
                   <span className="text-xs font-semibold text-gray-500">
+
                     {day.label}
+
                   </span>
 
+
                   <span className="text-xs text-gray-400">
+
                     {day.dayNum}
+
                   </span>
 
 
@@ -595,7 +743,9 @@ export default function DashboardPage() {
                       className="text-2xl"
                       title={cfg.label}
                     >
+
                       {cfg.emoji}
+
                     </span>
 
                   ) : (
@@ -614,9 +764,13 @@ export default function DashboardPage() {
                     >
 
                       {isToday && (
+
                         <span className="text-[#6F3FB5] text-xs">
+
                           ?
+
                         </span>
+
                       )}
 
                     </div>
@@ -625,13 +779,19 @@ export default function DashboardPage() {
 
 
                   {isToday && (
+
                     <span className="text-xs font-bold text-[#6F3FB5]">
+
                       Today
+
                     </span>
+
                   )}
 
                 </div>
+
               );
+
             })}
 
 
@@ -649,8 +809,11 @@ export default function DashboardPage() {
                 className="text-[#6F3FB5] group-hover:scale-110 transition-transform"
               />
 
+
               <span className="text-xs font-semibold text-[#6F3FB5]">
+
                 Add
+
               </span>
 
             </button>
@@ -661,21 +824,28 @@ export default function DashboardPage() {
           {/* TODAY'S MOOD */}
 
           {moodLogs[todayKey] && (
+
             <div className="mt-4 pt-4 border-t border-purple-50 flex items-center gap-3">
 
               <span className="text-2xl">
+
                 {
                   moodConfig[
                     moodLogs[todayKey]
                   ]?.emoji
                 }
+
               </span>
+
 
               <div>
 
                 <div className="text-xs text-gray-400">
+
                   Mood hari ini
+
                 </div>
+
 
                 <div
                   className="text-sm font-bold"
@@ -687,17 +857,20 @@ export default function DashboardPage() {
                       "#6F3FB5",
                   }}
                 >
+
                   {
                     moodConfig[
                       moodLogs[todayKey]
                     ]?.label ||
                     moodLogs[todayKey]
                   }
+
                 </div>
 
               </div>
 
             </div>
+
           )}
 
         </section>
@@ -705,9 +878,6 @@ export default function DashboardPage() {
 
         {/* ==================================================
             TOP PSYCHOLOGISTS
-            ==================================================
-            MASIH menggunakan mockData untuk sementara.
-            Nanti kita sambungkan ke API psychologist.
         ================================================== */}
 
         <section>
@@ -715,15 +885,21 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between mb-4">
 
             <h2 className="text-lg font-bold text-gray-900">
+
               Top Psychologist
+
             </h2>
+
 
             <Link
               to="/psychologists"
               className="text-sm text-[#6F3FB5] font-semibold hover:underline flex items-center gap-1"
             >
+
               Lihat semua
+
               <ChevronRight size={14} />
+
             </Link>
 
           </div>
@@ -750,13 +926,20 @@ export default function DashboardPage() {
                     className="w-14 h-14 rounded-2xl object-cover mb-3 bg-purple-100"
                   />
 
+
                   <h3 className="font-bold text-gray-900 text-sm leading-tight">
+
                     {p.name}
+
                   </h3>
 
+
                   <p className="text-xs text-gray-500 mb-2">
+
                     {p.specialization}
+
                   </p>
+
 
                   <div className="flex items-center gap-1 text-xs">
 
@@ -766,12 +949,18 @@ export default function DashboardPage() {
                       className="text-yellow-400"
                     />
 
+
                     <span className="font-semibold text-gray-700">
+
                       {p.rating}
+
                     </span>
 
+
                     <span className="text-gray-400 ml-1">
+
                       {p.consultations}
+
                     </span>
 
                   </div>
@@ -802,17 +991,26 @@ export default function DashboardPage() {
                   className="text-[#6F3FB5]"
                 />
 
+
                 <h2 className="text-lg font-bold text-gray-900">
+
                   Journaling Feelings
+
                 </h2>
 
               </div>
 
+
               <p className="text-sm text-gray-500 leading-relaxed mb-2">
+
                 Write down what's on your heart,
+
                 <br />
+
                 so you can feel relieved before going to sleep.
+
               </p>
+
 
               <div className="flex items-center gap-2 text-xs text-gray-400 mb-5">
 
@@ -821,6 +1019,7 @@ export default function DashboardPage() {
                 Reminder: 8:00 PM
 
               </div>
+
 
               <Link
                 to="/journal"
@@ -849,16 +1048,16 @@ export default function DashboardPage() {
 
         {/* ==================================================
             MIND HUB
-            ==================================================
-            Masih menggunakan data UI sementara.
-            Nanti kita sambungkan ke Mind Hub Admin API.
         ================================================== */}
 
         <section>
 
           <h2 className="text-lg font-bold text-gray-900 mb-4">
+
             Mind Hub
+
           </h2>
+
 
           <div className="grid md:grid-cols-2 gap-4">
 
@@ -886,6 +1085,7 @@ export default function DashboardPage() {
                 color:
                   "from-[#EC4899] to-[#F97316]",
               },
+
             ].map((hub) => (
 
               <Link
@@ -900,15 +1100,20 @@ export default function DashboardPage() {
                   className="w-full h-48 object-cover"
                 />
 
+
                 <div
                   className={`absolute inset-0 bg-gradient-to-t ${hub.color} opacity-80`}
                 />
 
+
                 <div className="absolute inset-0 p-6 text-white flex flex-col justify-end">
 
                   <h3 className="text-lg font-bold mb-2">
+
                     {hub.title}
+
                   </h3>
+
 
                   <ul className="space-y-1 mb-4">
 
@@ -931,11 +1136,14 @@ export default function DashboardPage() {
 
                   </ul>
 
+
                   <button
                     type="button"
                     className="self-start bg-white text-[#6F3FB5] text-xs font-bold px-4 py-2 rounded-lg hover:bg-purple-50 transition-colors"
                   >
+
                     Start your journey
+
                   </button>
 
                 </div>
@@ -956,12 +1164,18 @@ export default function DashboardPage() {
         <section>
 
           <h2 className="text-lg font-bold text-gray-900 mb-1">
+
             Based on your current state
+
           </h2>
 
+
           <p className="text-sm text-gray-500 mb-4">
+
             Artikel yang dipersonalisasi untukmu
+
           </p>
+
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
 
@@ -986,15 +1200,22 @@ export default function DashboardPage() {
 
                 </div>
 
+
                 <div className="p-4">
 
                   <span className="text-xs text-[#6F3FB5] font-semibold">
+
                     {a.category}
+
                   </span>
 
+
                   <h3 className="text-sm font-bold text-gray-900 mt-1 mb-2 leading-snug">
+
                     {a.title}
+
                   </h3>
+
 
                   <div className="flex items-center gap-1 text-xs text-gray-400">
 
@@ -1022,17 +1243,20 @@ export default function DashboardPage() {
       ================================================== */}
 
       {showMoodModal && (
+
         <MoodModal
           onClose={() =>
             setShowMoodModal(false)
           }
           onSave={handleSaveMood}
         />
+
       )}
 
 
       <Footer />
 
     </div>
+
   );
 }
