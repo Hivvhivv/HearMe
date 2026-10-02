@@ -88,7 +88,13 @@ export const aiAPI = {
       stress: "Stres", burnout: "Kelelahan", bahagia: "Bahagia", bingung: "Bingung",
       kesepian: "Kesepian", overthinking: "Overthinking",
     };
-    const userMessages = messages.filter((m) => m.role === "user").map((m) => m.content.toLowerCase()).join(" ");
+    // content opsional pada tipe AIMessage, jadi pesan tanpa
+    // isi (mis. placeholder audio) harus dilewati -- kalau
+    // tidak, .toLowerCase() pada undefined membuat crash.
+    const userMessages = messages
+      .filter((m) => m.role === "user" && typeof m.content === "string")
+      .map((m) => (m.content as string).toLowerCase())
+      .join(" ");
     let dominantEmotion = "Netral";
     for (const [kw, label] of Object.entries(emotionKeywords)) {
       if (userMessages.includes(kw)) { dominantEmotion = label; break; }

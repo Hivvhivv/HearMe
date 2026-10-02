@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { Search, X, User, Calendar, Clock, FileText, ChevronRight } from "lucide-react";
 import PsychologistNavbar from "../../components/PsychologistNavbar";
+import { consultationAPI } from "../../api/consultation.api";
+import type { Consultation as ApiConsultation } from "../../types";
 
 // ======================================================
 // ## DATABASE TEMPLATE IF CONNECTED ##
@@ -17,18 +19,10 @@ import PsychologistNavbar from "../../components/PsychologistNavbar";
 //
 // ======================================================
 
-interface Consultation {
-  id: string;
-  userId?: string;
-  userName?: string;
-  userPhoto?: string;
-  date?: string;
-  time?: string;
-  status?: string;
-  duration?: number;
-  notes?: string;
-  [key: string]: unknown;
-}
+// Tipe Consultation diambil dari src/types, bukan
+// didefinisikan ulang di sini. `duration` ditambahkan karena
+// hanya dipakai untuk tampilan di halaman ini.
+type Consultation = ApiConsultation & { duration?: number };
 
 interface Patient {
   userId: string;
@@ -39,25 +33,12 @@ interface Patient {
 
 const HISTORY_STATUSES = ["completed", "cancelled"];
 
-const MOCK_PATIENTS: Patient[] = [
-  {
-    userId: "mock-1",
-    userName: "Budi Santoso",
-    consultations: [
-      { id: "m1a", userId: "mock-1", userName: "Budi Santoso", date: "2026-06-01", time: "09:00", status: "completed", duration: 60, notes: "Pasien menunjukkan perkembangan positif dalam mengelola kecemasan." },
-      { id: "m1b", userId: "mock-1", userName: "Budi Santoso", date: "2026-06-08", time: "10:00", status: "completed", duration: 50, notes: "Latihan pernapasan diberikan, tindak lanjut minggu depan." },
-      { id: "m1c", userId: "mock-1", userName: "Budi Santoso", date: "2026-06-15", time: "09:00", status: "cancelled", notes: "Pasien membatalkan karena sakit." },
-    ],
-  },
-  {
-    userId: "mock-2",
-    userName: "Raka Pratama",
-    consultations: [
-      { id: "m3a", userId: "mock-2", userName: "Raka Pratama", date: "2026-05-28", time: "14:00", status: "completed", duration: 45 },
-      { id: "m3b", userId: "mock-2", userName: "Raka Pratama", date: "2026-06-04", time: "14:00", status: "completed", duration: 60, notes: "Evaluasi kemajuan baik." },
-    ],
-  },
-];
+// MOCK_PATIENTS DIHAPUS.
+//
+// Dulu halaman ini jatuh ke data palsu ketika riwayat kosong,
+// sehingga psikolog melihat "pasien" bernama Budi Santoso dan
+// Raka Pratama yang tidak pernah ada. Sekarang riwayat kosong
+// menampilkan empty state yang jujur.
 
 function getInitials(name: string) {
   return name.split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase();
@@ -85,29 +66,77 @@ export default function PsychologistPatientsPage() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [search, setSearch] = useState("");
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  // ====================================================
+  // RIWAYAT PASIEN — DARI BACKEND + MONGODB
+  // ====================================================
+  //
+  // Sebelumnya membaca dua key localStorage sekaligus dan
+  // JATUH KE MOCK_PATIENTS kalau kosong -- jadi psikolog
+  // bisa melihat "pasien" yang tidak pernah ada.
+  //
+  // Sekarang GET /api/consultations/mine, dikelompokkan per
+  // user. Kalau belum ada riwayat, tampilkan empty state
+  // yang jujur, bukan data palsu.
+  //
+  // ====================================================
 
   useEffect(() => {
-    const raw1 = localStorage.getItem("hearme_consultations") || "[]";
-    const raw2 = localStorage.getItem("hearme_consultations_v2") || "[]";
-    let all: Consultation[] = [];
-    try { all = [...JSON.parse(raw1), ...JSON.parse(raw2)]; } catch {}
+    let cancelled = false;
 
-    // Filter to only completed/cancelled
-    const historyOnly = all.filter((c) => HISTORY_STATUSES.includes(c.status || ""));
+    const load = async () => {
+      try {
+        setLoading(true);
+        setError("");
 
-    if (historyOnly.length === 0) {
-      setPatients(MOCK_PATIENTS);
-      return;
-    }
+        const all = await consultationAPI.getMyConsultations();
 
-    const map = new Map<string, Patient>();
-    historyOnly.forEach((c, idx) => {
-      const uid = c.userId || `anon-${idx}`;
-      const uname = c.userName || `Pengguna #${idx + 1}`;
-      if (!map.has(uid)) map.set(uid, { userId: uid, userName: uname, userPhoto: c.userPhoto as string | undefined, consultations: [] });
-      map.get(uid)!.consultations.push(c);
-    });
-    setPatients(Array.from(map.values()));
+        if (cancelled) return;
+
+        const historyOnly = all.filter((c) =>
+          HISTORY_STATUSES.includes(c.status || "")
+        );
+
+        const map = new Map<string, Patient>();
+
+        historyOnly.forEach((c, idx) => {
+          const uid = String(c.userId || `anon-${idx}`);
+          const uname = c.userName || `Pengguna #${idx + 1}`;
+
+          if (!map.has(uid)) {
+            map.set(uid, {
+              userId: uid,
+              userName: uname,
+              userPhoto: c.avatar,
+              consultations: [],
+            });
+          }
+
+          map.get(uid)!.consultations.push(c);
+        });
+
+        setPatients(Array.from(map.values()));
+      } catch (err) {
+        if (cancelled) return;
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Gagal mengambil riwayat pasien"
+        );
+        setPatients([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const filtered = patients.filter((p) => p.userName.toLowerCase().includes(search.toLowerCase()));
@@ -133,7 +162,29 @@ export default function PsychologistPatientsPage() {
           )}
         </div>
 
-        {filtered.length === 0 ? (
+        {error && (
+          <div className="mb-4 bg-red-50 border border-red-100 text-red-600 text-sm rounded-2xl px-5 py-3">
+            {error}
+          </div>
+        )}
+
+        {loading && (
+          <div className="grid sm:grid-cols-2 gap-3">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="bg-white rounded-2xl border border-purple-100 p-5 animate-pulse">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-full bg-purple-100" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3.5 bg-purple-100 rounded w-2/3" />
+                    <div className="h-3 bg-purple-50 rounded w-1/3" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!loading && filtered.length === 0 ? (
           <div className="text-center py-20 text-gray-400">
             <User className="w-12 h-12 mx-auto mb-3 opacity-30" />
             <p className="font-medium">Tidak ada riwayat pasien</p>

@@ -17,3 +17,9 @@ logs/
 *.log
 .claude-replay.*
 .tmp-*
+
+# Berkas yang diunggah user (foto jurnal, gambar forum,
+# thumbnail Mind Hub). MongoDB hanya menyimpan URL-nya;
+# isi filenya ada di sini dan TIDAK boleh masuk git.
+backend/uploads/
+uploads/

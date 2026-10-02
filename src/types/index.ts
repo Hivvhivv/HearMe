@@ -190,7 +190,13 @@ export interface Consultation {
 
   notes?: string;
 
+  // Diisi backend saat psikolog menolak konsultasi
+  // (PATCH /api/consultations/:id/status dengan reason).
+  rejectionReason?: string | null;
+
   createdAt?: string;
+
+  updatedAt?: string;
 }
 
 

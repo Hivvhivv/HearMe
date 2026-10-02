@@ -1,33 +1,24 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Calendar, Clock, MessageCircle, Video, RefreshCw, X, User } from "lucide-react";
 import PsychologistNavbar from "../../components/PsychologistNavbar";
+import { consultationAPI } from "../../api/consultation.api";
+import type { Consultation as ApiConsultation } from "../../types";
 
 // ======================================================
-// ## DATABASE TEMPLATE IF CONNECTED ##
-// SELECT * FROM consultations WHERE psychologist_id = ? AND status = 'approved' AND date >= NOW() ORDER BY date ASC
+// KONSULTASI MENDATANG — DARI BACKEND + MONGODB
+// ======================================================
+//
+// Sebelumnya membaca localStorage dan memfilter dengan
+// PSYCH_ID = "p1" yang di-hardcode.
+//
+// Sekarang GET /api/consultations/mine — backend sudah
+// memfilter berdasarkan psikolog yang login, dan tiap aksi
+// (reschedule / tolak) diverifikasi kepemilikannya.
 // ======================================================
 
-const PSYCH_ID = "p1";
+type Consultation = ApiConsultation;
 
-interface Consultation {
-  id: string;
-  psychologistId: string;
-  userId: string;
-  userName?: string;
-  date: string;
-  time: string;
-  fee: number;
-  status: "pending" | "approved" | "rejected" | "completed";
-}
-
-function getConsultations(): Consultation[] {
-  try { return JSON.parse(localStorage.getItem("hearme_consultations_v2") || "[]"); }
-  catch { return []; }
-}
-function saveConsultations(list: Consultation[]) {
-  localStorage.setItem("hearme_consultations_v2", JSON.stringify(list));
-}
 function getTodayStr() { return new Date().toISOString().split("T")[0]; }
 function formatDate(d: string) {
   if (!d) return "-";
@@ -35,7 +26,18 @@ function formatDate(d: string) {
   if (isNaN(dt.getTime())) return d;
   return dt.toLocaleDateString("id-ID", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 }
-function formatCurrency(n: number) {
+// fee bisa berupa angka, string tampilan ("Rp 150.000"),
+// atau tidak ada pada data lama.
+function formatCurrency(value?: number | string) {
+  if (value === undefined || value === null) return "-";
+
+  const n =
+    typeof value === "number"
+      ? value
+      : Number(String(value).replace(/[^0-9]/g, ""));
+
+  if (!Number.isFinite(n) || n === 0) return "-";
+
   return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(n);
 }
 
@@ -106,28 +108,79 @@ export default function PsychologistUpcomingPage() {
   const [rescheduleTarget, setRescheduleTarget] = useState<Consultation | null>(null);
   const [cancelTarget, setCancelTarget] = useState<string | null>(null);
 
-  const refresh = () => {
-    const all = getConsultations().filter(
-      (c) => c.psychologistId === PSYCH_ID && c.status === "approved" && c.date >= getTodayStr()
-    );
-    all.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-    setConsultations(all);
-  };
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  useEffect(() => { refresh(); }, []);
+  const refresh = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
 
-  const handleReschedule = (id: string, date: string, time: string) => {
-    const all = getConsultations();
-    saveConsultations(all.map((c) => c.id === id ? { ...c, date, time } : c));
+      const all = await consultationAPI.getMyConsultations();
+
+      const upcoming = all
+        .filter(
+          (c) =>
+            ["approved", "rescheduled", "upcoming", "active"].includes(c.status) &&
+            (c.date || "") >= getTodayStr()
+        )
+        .sort((a, b) =>
+          ((a.date || "") + (a.time || "")).localeCompare(
+            (b.date || "") + (b.time || "")
+          )
+        );
+
+      setConsultations(upcoming);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Gagal mengambil konsultasi"
+      );
+      setConsultations([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const handleReschedule = async (id: string, date: string, time: string) => {
     setRescheduleTarget(null);
-    refresh();
+
+    try {
+      // Backend memverifikasi slot ini memang milik psikolog
+      // ini dan masih kosong, lalu mengambilnya atomic.
+      await consultationAPI.reschedule(id, date, time);
+      await refresh();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Gagal menjadwalkan ulang"
+      );
+    }
   };
 
-  const handleCancel = (id: string) => {
-    const all = getConsultations();
-    saveConsultations(all.map((c) => c.id === id ? { ...c, status: "rejected" as const } : c));
+  const handleCancel = async (id: string) => {
     setCancelTarget(null);
-    refresh();
+
+    try {
+      await consultationAPI.updateConsultationStatus(
+        id,
+        "rejected",
+        "Dibatalkan oleh psikolog"
+      );
+      await refresh();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Gagal membatalkan konsultasi"
+      );
+    }
   };
 
   return (
@@ -156,7 +209,30 @@ export default function PsychologistUpcomingPage() {
           <p className="text-sm text-gray-500 mt-1">Sesi yang sudah dikonfirmasi dan akan segera berlangsung</p>
         </div>
 
-        {consultations.length === 0 ? (
+        {error && (
+          <div className="mb-4 bg-red-50 border border-red-100 text-red-600 text-sm rounded-2xl px-5 py-3">
+            {error}
+          </div>
+        )}
+
+        {loading && (
+          <div className="flex flex-col gap-3">
+            {[0, 1].map((i) => (
+              <div key={i} className="bg-white rounded-2xl border border-purple-100 p-5 animate-pulse">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-11 h-11 rounded-full bg-purple-100" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3.5 bg-purple-100 rounded w-1/3" />
+                    <div className="h-3 bg-purple-50 rounded w-1/4" />
+                  </div>
+                </div>
+                <div className="h-8 bg-purple-50 rounded-xl w-48" />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!loading && consultations.length === 0 ? (
           <div className="bg-white rounded-2xl border border-purple-100 p-14 text-center">
             <div className="w-16 h-16 mx-auto rounded-2xl bg-[#F5EEFC] flex items-center justify-center mb-3">
               <Calendar size={28} className="text-[#C9A9E9]" />

@@ -1,64 +1,208 @@
-import type { MindHubContent } from "../types";
-import { mindHubContents as mockContents } from "../data/mockData";
-
 // ======================================================
-// ## DATABASE TEMPLATE IF CONNECTED ##
-// mind_hub_contents table: id, category, title, content, image, duration, published, created_at, updated_at
-// SELECT * FROM mind_hub_contents WHERE published = true ORDER BY created_at DESC
+// MIND HUB API — BACKEND + MONGODB
+// ======================================================
+//
+// Sebelumnya file ini menyimpan konten di localStorage
+// ("hearme_mindhub_admin") dan menyeminya dari mockData.
+//
+// Sekarang semuanya dari backend:
+//
+//   user  -> GET /api/mind-hub           (hanya published)
+//   admin -> /api/admin/mind-hub/*       (termasuk draft)
+//
+// Pemisahan published/draft dijaga BACKEND, jadi frontend
+// tidak bisa (dan tidak perlu) memutuskannya.
+//
 // ======================================================
 
-const KEY = "hearme_mindhub_admin";
+import { api } from "./client";
 
-function all(): MindHubContent[] {
-  const raw = localStorage.getItem(KEY);
-  if (!raw) {
-    const init: MindHubContent[] = mockContents.map((c) => ({
-      ...c,
-      published: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }));
-    localStorage.setItem(KEY, JSON.stringify(init));
-    return init;
-  }
-  return JSON.parse(raw);
-}
-function save(c: MindHubContent[]) { localStorage.setItem(KEY, JSON.stringify(c)); }
+export type MindHubStatus = "draft" | "published" | "archived";
+
+export type MindHubCategory =
+  | "Mind and Balance"
+  | "Self-Care Corner";
+
+export type MindHubItem = {
+  id: string;
+  legacyId: string | null;
+  category: MindHubCategory;
+  title: string;
+  excerpt: string;
+  content: string;
+  image: string;
+  duration: string;
+  status: MindHubStatus;
+  publishedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type Pagination = {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+};
+
+type Envelope<T> = { success: boolean; data: T };
+
+export type MindHubInput = {
+  title?: string;
+  excerpt?: string;
+  content?: string;
+  category?: MindHubCategory;
+  duration?: string;
+
+  // Boleh data URL base64 (akan diunggah & divalidasi
+  // backend) atau URL yang sudah tersimpan.
+  image?: string;
+
+  status?: MindHubStatus;
+};
+
 
 export const mindHubAPI = {
-  getAll: async (publishedOnly = true): Promise<MindHubContent[]> => {
-    return publishedOnly ? all().filter((c) => c.published) : all();
+
+  // ====================================================
+  // USER
+  // ====================================================
+
+  list: async (params: {
+    category?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  } = {}): Promise<{
+    contents: MindHubItem[];
+    pagination: Pagination;
+  }> => {
+    const qs = new URLSearchParams();
+
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== "") qs.set(k, String(v));
+    }
+
+    const res = await api.get<
+      Envelope<{
+        contents: MindHubItem[];
+        pagination: Pagination;
+      }>
+    >(`/mind-hub${qs.toString() ? `?${qs}` : ""}`);
+
+    return res.data;
   },
 
-  getById: async (id: string): Promise<MindHubContent | null> => {
-    return all().find((c) => c.id === id) || null;
+
+  getById: async (id: string): Promise<MindHubItem> => {
+    const res = await api.get<
+      Envelope<{ content: MindHubItem }>
+    >(`/mind-hub/${id}`);
+
+    return res.data.content;
   },
 
-  create: async (data: Omit<MindHubContent, "id" | "createdAt" | "updatedAt">): Promise<MindHubContent> => {
-    // ## DATABASE TEMPLATE IF CONNECTED ## → INSERT INTO mind_hub_contents (...) VALUES (...)
-    const item: MindHubContent = {
-      ...data,
-      id: `mh_${Date.now()}`,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    save([...all(), item]);
-    return item;
+
+  /*
+   * MATERI TERKAIT (spec section 9).
+   *
+   * Dihitung backend lewat query: kategori sama, dan
+   * artikel yang sedang dibuka DIKECUALIKAN. Tidak
+   * di-hardcode di frontend.
+   */
+  getRelated: async (
+    id: string,
+    limit = 3
+  ): Promise<MindHubItem[]> => {
+    const res = await api.get<
+      Envelope<{ contents: MindHubItem[] }>
+    >(`/mind-hub/${id}/related?limit=${limit}`);
+
+    return res.data.contents;
   },
 
-  update: async (id: string, data: Partial<MindHubContent>): Promise<MindHubContent> => {
-    // ## DATABASE TEMPLATE IF CONNECTED ## → UPDATE mind_hub_contents SET ... WHERE id = ?
-    const updated = all().map((c) => c.id === id ? { ...c, ...data, updatedAt: new Date().toISOString() } : c);
-    save(updated);
-    return updated.find((c) => c.id === id)!;
+
+  // ====================================================
+  // ADMIN
+  // ====================================================
+
+  adminList: async (params: {
+    category?: string;
+    status?: string;
+    search?: string;
+  } = {}): Promise<MindHubItem[]> => {
+    const qs = new URLSearchParams();
+
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== "") qs.set(k, String(v));
+    }
+
+    const res = await api.get<
+      Envelope<{ contents: MindHubItem[] }>
+    >(`/admin/mind-hub${qs.toString() ? `?${qs}` : ""}`);
+
+    return res.data.contents;
   },
+
+
+  adminGetById: async (id: string): Promise<MindHubItem> => {
+    const res = await api.get<
+      Envelope<{ content: MindHubItem }>
+    >(`/admin/mind-hub/${id}`);
+
+    return res.data.content;
+  },
+
+
+  create: async (
+    input: MindHubInput
+  ): Promise<MindHubItem> => {
+    const res = await api.post<
+      Envelope<{ content: MindHubItem }>
+    >("/admin/mind-hub", input);
+
+    return res.data.content;
+  },
+
+
+  update: async (
+    id: string,
+    input: MindHubInput
+  ): Promise<MindHubItem> => {
+    const res = await api.patch<
+      Envelope<{ content: MindHubItem }>
+    >(`/admin/mind-hub/${id}`, input);
+
+    return res.data.content;
+  },
+
+
+  setStatus: async (
+    id: string,
+    status: MindHubStatus
+  ): Promise<MindHubItem> => {
+    const res = await api.patch<
+      Envelope<{ content: MindHubItem }>
+    >(`/admin/mind-hub/${id}/publish`, { status });
+
+    return res.data.content;
+  },
+
+
+  // Pintasan yang dipakai UI admin lama.
+  togglePublish: async (
+    id: string,
+    currentStatus: MindHubStatus
+  ): Promise<MindHubItem> =>
+    mindHubAPI.setStatus(
+      id,
+      currentStatus === "published" ? "draft" : "published"
+    ),
+
 
   delete: async (id: string): Promise<void> => {
-    // ## DATABASE TEMPLATE IF CONNECTED ## → DELETE FROM mind_hub_contents WHERE id = ?
-    save(all().filter((c) => c.id !== id));
-  },
-
-  togglePublish: async (id: string): Promise<void> => {
-    save(all().map((c) => c.id === id ? { ...c, published: !c.published, updatedAt: new Date().toISOString() } : c));
+    await api.delete<Envelope<{ message: string }>>(
+      `/admin/mind-hub/${id}`
+    );
   },
 };

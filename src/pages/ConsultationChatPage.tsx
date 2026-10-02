@@ -5,6 +5,7 @@ import DashboardNavbar from "../components/DashboardNavbar";
 import { consultationService } from "../services";
 import { consultationChatService } from "../services";
 import { psychologists } from "../data/mockData";
+import type { Consultation } from "../types";
 
 // ======================================================
 // ## DATABASE TEMPLATE IF CONNECTED ##
@@ -34,7 +35,8 @@ export default function ConsultationChatPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
-  const [consultations, setConsultations] = useState<{ id: string; psychologistId?: string; psychologistName: string; specialization: string; date: string; time: string; status: string; avatar: string }[]>([]);
+  // Tipe Consultation dari src/types, bukan bentuk duplikat.
+  const [consultations, setConsultations] = useState<Consultation[]>([]);
   const [input, setInput] = useState("");
   const [typing, setTyping] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);

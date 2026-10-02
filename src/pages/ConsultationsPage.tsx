@@ -4,24 +4,49 @@ import { Calendar, Clock, Plus, MessageCircle } from "lucide-react";
 import DashboardNavbar from "../components/DashboardNavbar";
 import Footer from "../components/Footer";
 import { consultationService } from "../services";
+import type { Consultation } from "../types";
 
 // ======================================================
-// ## DATABASE TEMPLATE IF CONNECTED ##
-// consultations table: id, user_id, psychologist_id, consultation_date, consultation_time, status
-// SELECT * FROM consultations WHERE user_id = ? ORDER BY consultation_date DESC
+// Data dari GET /api/consultations/mine (MongoDB).
+//
+// State memakai tipe Consultation dari src/types, bukan
+// bentuk duplikat buatan sendiri. Duplikat sebelumnya
+// mewajibkan `specialization` padahal pada Consultation
+// field itu opsional, sehingga tidak pernah benar-benar
+// cocok dengan data backend.
 // ======================================================
 
-type Status = "upcoming" | "completed" | "cancelled" | "active";
+// Harus mencakup SEMUA status yang bisa dikirim backend.
+//
+// Sebelumnya hanya 4 status yang dikenali, padahal backend
+// juga mengembalikan pending / approved / rejected /
+// rescheduled -- akibatnya konsultasi yang baru di-booking
+// (status "pending") tidak pernah muncul di halaman ini.
+type Status = Consultation["status"];
+
 const statusConfig: Record<Status, { label: string; class: string }> = {
+  pending: { label: "Menunggu Konfirmasi", class: "bg-amber-50 text-amber-600" },
+  approved: { label: "Disetujui", class: "bg-blue-50 text-blue-600" },
+  rescheduled: { label: "Dijadwalkan Ulang", class: "bg-indigo-50 text-indigo-600" },
   upcoming: { label: "Mendatang", class: "bg-blue-50 text-blue-600" },
   active: { label: "Aktif", class: "bg-green-50 text-green-600" },
   completed: { label: "Selesai", class: "bg-gray-50 text-gray-600" },
   cancelled: { label: "Dibatalkan", class: "bg-red-50 text-red-500" },
+  rejected: { label: "Ditolak", class: "bg-red-50 text-red-500" },
 };
+
+// Status yang dianggap belum selesai.
+const OPEN_STATUSES: Status[] = [
+  "pending",
+  "approved",
+  "rescheduled",
+  "upcoming",
+  "active",
+];
 
 export default function ConsultationsPage() {
   const [tab, setTab] = useState<"upcoming" | "history">("upcoming");
-  const [consultations, setConsultations] = useState<{ id: string; psychologistName: string; specialization: string; date: string; time: string; status: Status; avatar: string }[]>([]);
+  const [consultations, setConsultations] = useState<Consultation[]>([]);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -29,7 +54,9 @@ export default function ConsultationsPage() {
   }, []);
 
   const shown = consultations.filter((c) =>
-    tab === "upcoming" ? c.status === "upcoming" || c.status === "active" : c.status === "completed" || c.status === "cancelled"
+    tab === "upcoming"
+      ? OPEN_STATUSES.includes(c.status)
+      : !OPEN_STATUSES.includes(c.status)
   );
 
   const handleCancel = async (id: string) => {

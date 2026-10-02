@@ -1,45 +1,111 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Clock, ArrowRight, Search } from "lucide-react";
 import DashboardNavbar from "../components/DashboardNavbar";
 import Footer from "../components/Footer";
-import { mindHubContents } from "../data/mockData";
+import {
+  mindHubAPI,
+  type MindHubItem,
+  type MindHubCategory,
+} from "../api/mindhub.api";
 
 // ======================================================
-// ## DATABASE TEMPLATE IF CONNECTED ##
-// mind_hub_contents: id, category, title, content, image, duration
-// mind_hub_articles: id, title, category, thumbnail, short_description, content, tags, status, created_by, created_at
-// SELECT * FROM mind_hub_contents WHERE category = ?
-// UNION SELECT id, title, category, thumbnail AS image, short_description AS excerpt, content, duration, 'published' AS status FROM mind_hub_articles WHERE status = 'published' AND category = ?
+// MIND HUB — DARI BACKEND + MONGODB
 // ======================================================
-
-function getAdminArticles() {
-  try {
-    const raw = localStorage.getItem("hearme_mindhub_admin");
-    if (!raw) return [];
-    const items: { id: string; title: string; category: string; image: string; excerpt: string; content: string; duration: string; published: boolean }[] = JSON.parse(raw);
-    return items.filter((i) => i.published).map((i) => ({
-      id: i.id,
-      category: i.category as "Mind and Balance" | "Self-Care Corner",
-      title: i.title,
-      duration: i.duration || "5 menit",
-      image: i.image || "",
-      excerpt: i.excerpt,
-      content: i.content,
-    }));
-  } catch { return []; }
-}
+//
+// Sebelumnya halaman ini menggabungkan DUA sumber:
+// mockData.ts dan localStorage "hearme_mindhub_admin".
+// Artinya konten yang dibuat admin hanya terlihat di
+// browser admin itu sendiri.
+//
+// Sekarang GET /api/mind-hub. Backend HANYA mengirim
+// konten berstatus published, jadi draft admin tidak
+// mungkin tampil di sini.
+//
+// Pencarian dan filter kategori dikerjakan DATABASE.
+//
+// ======================================================
 
 export default function MindHubPage() {
-  const [tab, setTab] = useState<"Mind and Balance" | "Self-Care Corner">("Mind and Balance");
+  const [tab, setTab] = useState<MindHubCategory>("Mind and Balance");
   const [search, setSearch] = useState("");
 
-  const adminArticles = getAdminArticles();
-  const allContents = [...mindHubContents, ...adminArticles];
+  const [items, setItems] = useState<MindHubItem[]>([]);
+  const [counts, setCounts] = useState({ balance: 0, selfCare: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const items = allContents.filter(
-    (c) => c.category === tab && c.title.toLowerCase().includes(search.toLowerCase())
-  );
+  // Jumlah per kategori untuk badge di hero. Diambil sekali;
+  // tidak ikut berubah saat user mengetik pencarian.
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadCounts = async () => {
+      try {
+        const [balance, selfCare] = await Promise.all([
+          mindHubAPI.list({
+            category: "Mind and Balance",
+            limit: 1,
+          }),
+          mindHubAPI.list({
+            category: "Self-Care Corner",
+            limit: 1,
+          }),
+        ]);
+
+        if (!cancelled) {
+          setCounts({
+            balance: balance.pagination.total,
+            selfCare: selfCare.pagination.total,
+          });
+        }
+      } catch {
+        // Badge jumlah bukan hal kritis.
+      }
+    };
+
+    loadCounts();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Daftar konten; pencarian di-debounce.
+  useEffect(() => {
+    let cancelled = false;
+
+    const timer = setTimeout(async () => {
+      try {
+        setLoading(true);
+        setError("");
+
+        const result = await mindHubAPI.list({
+          category: tab,
+          search: search.trim() || undefined,
+          limit: 60,
+        });
+
+        if (!cancelled) setItems(result.contents);
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Gagal mengambil konten Mind Hub"
+          );
+          setItems([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, search ? 300 : 0);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [tab, search]);
 
   return (
     <div className="min-h-screen bg-[#FAF8FD]">
@@ -55,10 +121,10 @@ export default function MindHubPage() {
           <p className="text-purple-200 text-sm mb-5 max-w-lg">Setiap langkah kecil menuju kesehatan mental yang lebih baik adalah pencapaian yang luar biasa.</p>
           <div className="flex gap-3">
             <span className="bg-white/20 text-white text-xs px-3 py-1.5 rounded-full font-semibold">
-              {allContents.filter(c => c.category === "Mind and Balance").length} Materi Mind & Balance
+              {counts.balance} Materi Mind & Balance
             </span>
             <span className="bg-white/20 text-white text-xs px-3 py-1.5 rounded-full font-semibold">
-              {allContents.filter(c => c.category === "Self-Care Corner").length} Materi Self-Care
+              {counts.selfCare} Materi Self-Care
             </span>
           </div>
         </div>
@@ -109,8 +175,30 @@ export default function MindHubPage() {
           )}
         </div>
 
+        {error && (
+          <div className="mb-6 bg-red-50 border border-red-100 text-red-600 text-sm rounded-2xl px-5 py-3">
+            {error}
+          </div>
+        )}
+
+        {loading && (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="bg-white rounded-2xl overflow-hidden border border-purple-50 animate-pulse">
+                <div className="h-44 bg-purple-100" />
+                <div className="p-5 space-y-3">
+                  <div className="h-4 bg-purple-50 rounded w-1/3" />
+                  <div className="h-4 bg-purple-100 rounded w-3/4" />
+                  <div className="h-3 bg-purple-50 rounded w-full" />
+                  <div className="h-3 bg-purple-50 rounded w-2/3" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {items.map((item) => (
+          {!loading && !error && items.map((item) => (
             <Link
               key={item.id}
               to={`/mind-hub/${item.id}`}
@@ -138,7 +226,7 @@ export default function MindHubPage() {
           ))}
         </div>
 
-        {items.length === 0 && (
+        {!loading && !error && items.length === 0 && (
           <div className="text-center py-16 text-gray-400">
             <div className="text-4xl mb-3">🔍</div>
             <p className="font-semibold">Materi tidak ditemukan</p>

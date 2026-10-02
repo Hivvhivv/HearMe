@@ -1,23 +1,111 @@
+import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, Clock, BookOpen } from "lucide-react";
 import DashboardNavbar from "../components/DashboardNavbar";
 import Footer from "../components/Footer";
-import { mindHubContents } from "../data/mockData";
+import { mindHubAPI, type MindHubItem } from "../api/mindhub.api";
+
+// ======================================================
+// DETAIL MIND HUB — DARI BACKEND + MONGODB
+// ======================================================
+//
+// MATERI TERKAIT (spec section 9) dihitung BACKEND lewat
+// query: kategori sama, artikel yang sedang dibuka
+// dikecualikan, dan hanya yang published.
+//
+// Dulu itu dihitung dari array mockData di frontend.
+//
+// Draft membalas 404 di endpoint publik, jadi konten yang
+// belum terbit tidak bisa dibuka walau id-nya diketahui.
+//
+// ======================================================
 
 export default function MindHubDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const item = mindHubContents.find((c) => c.id === id);
-  const related = mindHubContents.filter((c) => c.category === item?.category && c.id !== id).slice(0, 3);
+
+  const [item, setItem] = useState<MindHubItem | null>(null);
+  const [related, setRelated] = useState<MindHubItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      if (!id) return;
+
+      try {
+        setLoading(true);
+        setError("");
+
+        // Materi terkait tidak boleh menggagalkan halaman
+        // kalau query-nya bermasalah, jadi dipisah.
+        const content = await mindHubAPI.getById(id);
+
+        if (cancelled) return;
+
+        setItem(content);
+
+        try {
+          setRelated(await mindHubAPI.getRelated(id, 3));
+        } catch {
+          setRelated([]);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Gagal mengambil materi"
+          );
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  if (loading) return (
+    <div className="min-h-screen bg-[#FAF8FD]">
+      <DashboardNavbar />
+      <div className="max-w-3xl mx-auto px-4 py-8">
+        <div className="h-64 rounded-3xl bg-purple-100 animate-pulse mb-6" />
+        <div className="space-y-3">
+          <div className="h-4 bg-purple-100 rounded w-1/3 animate-pulse" />
+          <div className="h-3 bg-purple-50 rounded w-full animate-pulse" />
+          <div className="h-3 bg-purple-50 rounded w-5/6 animate-pulse" />
+          <div className="h-3 bg-purple-50 rounded w-4/6 animate-pulse" />
+        </div>
+      </div>
+    </div>
+  );
 
   if (!item) return (
     <div className="min-h-screen bg-[#FAF8FD]">
       <DashboardNavbar />
-      <div className="flex items-center justify-center h-64 text-gray-400">Materi tidak ditemukan.</div>
+      <div className="max-w-3xl mx-auto px-4 py-16 text-center">
+        <div className="bg-white rounded-3xl border border-purple-50 p-8">
+          <div className="text-4xl mb-3">📄</div>
+          <p className="font-semibold text-gray-700">Materi tidak ditemukan</p>
+          <p className="text-sm text-gray-500 mt-1 mb-6">
+            {error || "Materi ini mungkin belum dipublikasikan."}
+          </p>
+          <Link to="/mind-hub" className="inline-block bg-[#6F3FB5] text-white font-semibold px-6 py-2.5 rounded-xl hover:bg-purple-800 transition-colors text-sm">
+            Lihat materi lain
+          </Link>
+        </div>
+      </div>
     </div>
   );
 
-  const paragraphs = item.content.split("\n\n");
+  const paragraphs = (item.content || "").split("\n\n");
 
   return (
     <div className="min-h-screen bg-[#FAF8FD]">

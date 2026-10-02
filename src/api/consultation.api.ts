@@ -57,6 +57,17 @@ export const consultationAPI = {
     await request(`/${id}/status`, { method: "PATCH", body: JSON.stringify({ status, reason }) });
   },
   updateStatus: async (id: string, status: Consultation["status"]): Promise<void> => consultationAPI.updateConsultationStatus(id, status),
+
+  // Jadwalkan ulang. Backend memverifikasi bahwa slot baru
+  // memang milik psikolog ini dan masih kosong, lalu
+  // mengambilnya secara atomic -- jadi dua reschedule
+  // bersamaan ke slot yang sama tidak bisa keduanya berhasil.
+  reschedule: async (id: string, date: string, time: string): Promise<void> => {
+    await request(`/${id}/reschedule`, {
+      method: "POST",
+      body: JSON.stringify({ date, time }),
+    });
+  },
   cancel: async (id: string): Promise<void> => consultationAPI.updateConsultationStatus(id, "cancelled"),
 
   getPsychologistSchedules: async (psychologistId: string) => {

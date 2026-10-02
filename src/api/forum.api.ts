@@ -14,7 +14,19 @@ const SAVED_KEY = "hearme_forum_saved";
 function allPosts(): ForumPost[] {
   const raw = localStorage.getItem(POSTS_KEY);
   if (!raw) {
-    const init = mockPosts.map((p) => ({ ...p, isAnonymous: false, visibility: "public" as const, saved: false, archived: false }));
+    // authorId WAJIB pada ForumPost (dipakai ownership
+    // check). Data seed mockData tidak punya field itu, jadi
+    // diisi di sini -- dan inilah salah satu alasan forum
+    // harus pindah ke MongoDB di Phase 6: tanpa pemilik yang
+    // nyata, archive/delete/report tidak bisa diamankan.
+    const init: ForumPost[] = mockPosts.map((p) => ({
+      ...p,
+      authorId: "seed",
+      isAnonymous: false,
+      visibility: "public" as const,
+      saved: false,
+      archived: false,
+    }));
     localStorage.setItem(POSTS_KEY, JSON.stringify(init));
     return init;
   }

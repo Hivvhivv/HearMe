@@ -1,13 +1,27 @@
 // ======================================================
-// DATABASE TEMPLATE IF CONNECTED
-// Replace localStorage/mock data with database query.
+// SERVICES
 // ======================================================
-
-import {
-  psychologists as mockPsychologists,
-  forumPosts as mockForumPosts,
-  articles as mockArticles,
-} from "../data/mockData";
+//
+// Yang MASIH di sini:
+//
+//   authService              -> backend + MongoDB
+//   consultationService      -> backend + MongoDB
+//   chatService              -> AI Listener (localStorage, Phase 4)
+//   consultationChatService  -> chat konsultasi (localStorage, Phase 4)
+//
+// Yang DIHAPUS karena tidak dipakai halaman mana pun dan
+// hanya mengembalikan mock data:
+//
+//   psychologistService  -> digantikan api/psychologist.api.ts
+//   journalService       -> Phase 5
+//   articleService       -> Phase 7
+//   forumService         -> digantikan api/forum.api.ts
+//   moodService          -> digantikan api/dailyMood.api.ts
+//
+// Membiarkannya hidup berarti menyisakan jalur penyimpanan
+// kedua yang bisa dipakai tanpa sadar.
+//
+// ======================================================
 
 import { consultationAPI } from "../api/consultation.api";
 import { api, refreshAccessToken } from "../api/client";
@@ -353,38 +367,6 @@ export const authService = {
 
 
 // ======================================================
-// PSYCHOLOGIST SERVICE
-// ======================================================
-
-export const psychologistService = {
-
-  getAll: async () => {
-
-    // DATABASE:
-    // SELECT * FROM psychologists
-    // WHERE verification_status = 'approved'
-
-    return mockPsychologists;
-
-  },
-
-
-  getById: async (
-    id: string
-  ) => {
-
-    return (
-      mockPsychologists.find(
-        (p) => p.id === id
-      ) || null
-    );
-
-  },
-
-};
-
-
-// ======================================================
 // CONSULTATION SERVICE
 // ======================================================
 
@@ -661,130 +643,6 @@ export const consultationService = {
 // Tidak ada halaman yang masih memakainya, jadi service
 // ini dihapus seluruhnya daripada dibiarkan sebagai
 // jalur penyimpanan kedua yang bisa dipakai tanpa sadar.
-// ======================================================
-
-
-// ======================================================
-// JOURNAL SERVICE
-// ======================================================
-
-export const journalService = {
-
-  getAll: () => {
-
-    const saved =
-      localStorage.getItem(
-        "hearme_journals"
-      );
-
-
-    return saved
-      ? JSON.parse(saved)
-      : [];
-
-  },
-
-
-  save: (entry: {
-
-    id: string;
-
-    title: string;
-
-    content: string;
-
-    mood: string;
-
-    date: string;
-
-  }) => {
-
-    const all =
-      journalService.getAll();
-
-
-    localStorage.setItem(
-
-      "hearme_journals",
-
-      JSON.stringify([
-        entry,
-        ...all,
-      ])
-
-    );
-
-  },
-
-};
-
-
-// ======================================================
-// ARTICLE SERVICE
-// ======================================================
-
-export const articleService = {
-
-  getAll: async () => {
-
-    return mockArticles;
-
-  },
-
-
-  getById: async (
-    id: string
-  ) => {
-
-    return (
-      mockArticles.find(
-        (a) => a.id === id
-      ) || null
-    );
-
-  },
-
-};
-
-
-// ======================================================
-// FORUM SERVICE
-// ======================================================
-
-export const forumService = {
-
-  getAll: () => {
-
-    const saved =
-      localStorage.getItem(
-        "hearme_forum"
-      );
-
-
-    return saved
-      ? JSON.parse(saved)
-      : mockForumPosts;
-
-  },
-
-
-  save: (
-    posts: typeof mockForumPosts
-  ) => {
-
-    localStorage.setItem(
-
-      "hearme_forum",
-
-      JSON.stringify(posts)
-
-    );
-
-  },
-
-};
-
-
 // ======================================================
 // CHAT SERVICE — AI LISTENER
 // ======================================================

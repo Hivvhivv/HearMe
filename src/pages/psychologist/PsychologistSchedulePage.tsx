@@ -1,6 +1,27 @@
 import { useState, useEffect, useCallback } from "react";
 import { Calendar, Clock, CheckCircle } from "lucide-react";
 import PsychologistNavbar from "../../components/PsychologistNavbar";
+import { scheduleAPI, type WeeklySchedule } from "../../api/schedule.api";
+import { consultationAPI } from "../../api/consultation.api";
+import type { Consultation as ApiConsultation } from "../../types";
+
+// ======================================================
+// JADWAL PRAKTIK — DARI BACKEND + MONGODB
+// ======================================================
+//
+// Sebelumnya template jadwal hanya disimpan di localStorage
+// ("hearme_psych_schedule"), jadi tidak ada slot nyata yang
+// bisa di-booking user: collection `schedules` selalu kosong.
+//
+// Sekarang:
+//
+//   PUT /api/consultations/schedules/weekly
+//
+// Backend menerjemahkan template mingguan ini menjadi slot
+// konkret untuk 4 minggu ke depan, dan TIDAK menghapus slot
+// yang sudah di-booking.
+//
+// ======================================================
 
 interface DaySchedule {
   available: boolean;
@@ -8,18 +29,7 @@ interface DaySchedule {
   end: string;
 }
 
-interface Schedule {
-  [day: string]: DaySchedule;
-}
-
-interface Consultation {
-  id: string;
-  date?: string;
-  time?: string;
-  userName?: string;
-  status?: string;
-  [key: string]: unknown;
-}
+type Schedule = WeeklySchedule;
 
 const DAYS = [
   { key: "senin", label: "Senin", short: "Sen" },
@@ -47,9 +57,29 @@ const DEFAULT_SCHEDULE: Schedule = {
   minggu:  { available: false, start: "09:00", end: "17:00" },
 };
 
-// Map JS day index (0=Sun) to schedule key
-const DAY_INDEX_MAP: Record<number, string> = {
-  1: "senin", 2: "selasa", 3: "rabu", 4: "kamis", 5: "jumat", 6: "sabtu", 0: "minggu",
+// Label & warna untuk SEMUA status yang bisa dikirim backend.
+// Daftar sebelumnya hanya mengenali 3 status, sehingga
+// konsultasi "pending" tampil sebagai "Selesai".
+const STATUS_LABEL: Record<string, string> = {
+  pending: "Menunggu Konfirmasi",
+  approved: "Disetujui",
+  rescheduled: "Dijadwalkan Ulang",
+  upcoming: "Mendatang",
+  active: "Aktif",
+  completed: "Selesai",
+  cancelled: "Dibatalkan",
+  rejected: "Ditolak",
+};
+
+const STATUS_BADGE: Record<string, string> = {
+  pending: "bg-amber-100 text-amber-700",
+  approved: "bg-blue-100 text-blue-700",
+  rescheduled: "bg-indigo-100 text-indigo-700",
+  upcoming: "bg-blue-100 text-blue-700",
+  active: "bg-green-100 text-green-700",
+  completed: "bg-green-100 text-green-700",
+  cancelled: "bg-red-100 text-red-700",
+  rejected: "bg-red-100 text-red-700",
 };
 
 function formatDate(dateStr: string) {
@@ -59,31 +89,73 @@ function formatDate(dateStr: string) {
 
 export default function PsychologistSchedulePage() {
   const [schedule, setSchedule] = useState<Schedule>(DEFAULT_SCHEDULE);
-  const [toast, setToast] = useState(false);
-  const [upcomingSlots, setUpcomingSlots] = useState<Consultation[]>([]);
+  const [toast, setToast] = useState("");
+  const [upcomingSlots, setUpcomingSlots] = useState<ApiConsultation[]>([]);
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [slotCount, setSlotCount] = useState(0);
+
+  // ====================================================
+  // MUAT TEMPLATE + KONSULTASI DARI BACKEND
+  // ====================================================
+
+  const loadUpcoming = useCallback(async () => {
+    try {
+      const [consultations, slots] = await Promise.all([
+        consultationAPI.getMyConsultations(),
+        scheduleAPI.listMine(),
+      ]);
+
+      // Hanya konsultasi yang belum selesai.
+      setUpcomingSlots(
+        consultations.filter(
+          (c) => !["completed", "cancelled", "rejected"].includes(c.status)
+        )
+      );
+
+      setSlotCount(slots.filter((s) => s.isAvailable).length);
+    } catch {
+      setUpcomingSlots([]);
+    }
+  }, []);
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("hearme_psych_schedule");
-      if (saved) setSchedule(JSON.parse(saved));
-    } catch { /* ignore */ }
-  }, []);
+    let cancelled = false;
 
-  const loadUpcoming = useCallback((sched: Schedule) => {
-    try {
-      const raw1 = JSON.parse(localStorage.getItem("hearme_consultations") || "[]") as Consultation[];
-      const raw2 = JSON.parse(localStorage.getItem("hearme_consultations_v2") || "[]") as Consultation[];
-      const all = [...raw1, ...raw2];
-      const slots = all.filter((c) => {
-        if (!c.date) return false;
-        const dayKey = DAY_INDEX_MAP[new Date(c.date).getDay()];
-        return sched[dayKey]?.available;
-      });
-      setUpcomingSlots(slots);
-    } catch { setUpcomingSlots([]); }
-  }, []);
+    const load = async () => {
+      try {
+        setLoading(true);
+        setError("");
 
-  useEffect(() => { loadUpcoming(schedule); }, [schedule, loadUpcoming]);
+        const saved = await scheduleAPI.getWeekly();
+
+        if (cancelled) return;
+
+        // Belum pernah menyimpan: pakai default sebagai saran.
+        if (saved) setSchedule(saved);
+
+        await loadUpcoming();
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Gagal mengambil jadwal"
+          );
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadUpcoming]);
 
   function toggleDay(key: string) {
     setSchedule((prev) => ({
@@ -99,10 +171,53 @@ export default function PsychologistSchedulePage() {
     }));
   }
 
-  function save() {
-    localStorage.setItem("hearme_psych_schedule", JSON.stringify(schedule));
-    setToast(true);
-    setTimeout(() => setToast(false), 3000);
+  // ====================================================
+  // SIMPAN KE BACKEND
+  // ====================================================
+
+  async function save() {
+    try {
+      setSaving(true);
+      setError("");
+
+      const result = await scheduleAPI.saveWeekly(schedule);
+
+      // Beri tahu apa yang sebenarnya terjadi, bukan hanya
+      // "berhasil disimpan" -- psikolog perlu tahu kalau ada
+      // slot terbooking yang kini di luar jadwalnya.
+      const parts = [`${result.totalSlots} slot tersedia`];
+
+      if (result.bookedOutsideTemplate > 0) {
+        parts.push(
+          `${result.bookedOutsideTemplate} konsultasi di luar jadwal baru tetap dipertahankan`
+        );
+      }
+
+      setToast(parts.join(" · "));
+      setTimeout(() => setToast(""), 5000);
+
+      await loadUpcoming();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Gagal menyimpan jadwal"
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#FAF8FD]">
+        <PsychologistNavbar />
+        <main className="max-w-3xl mx-auto px-4 py-16 flex flex-col items-center gap-4">
+          <div className="w-10 h-10 border-4 border-purple-100 border-t-[#6F3FB5] rounded-full animate-spin" />
+          <p className="text-sm text-gray-500">Memuat jadwal...</p>
+        </main>
+      </div>
+    );
   }
 
   return (
@@ -170,13 +285,27 @@ export default function PsychologistSchedulePage() {
           })}
         </div>
 
+        {/* Error */}
+        {error && (
+          <div className="mb-4 bg-red-50 border border-red-100 text-red-600 text-sm rounded-2xl px-5 py-3">
+            {error}
+          </div>
+        )}
+
         {/* Save Button */}
         <button
           onClick={save}
-          className="w-full bg-[#6F3FB5] hover:bg-[#5c33a0] text-white font-semibold py-3 rounded-2xl transition-colors shadow-sm"
+          disabled={saving}
+          className="w-full bg-[#6F3FB5] hover:bg-[#5c33a0] disabled:opacity-60 text-white font-semibold py-3 rounded-2xl transition-colors shadow-sm"
         >
-          Simpan Jadwal
+          {saving ? "Menyimpan..." : "Simpan Jadwal"}
         </button>
+
+        <p className="text-xs text-gray-400 text-center mt-3">
+          Jadwal dibuat untuk 4 minggu ke depan. Slot yang sudah
+          di-booking tidak akan terhapus.
+          {slotCount > 0 && ` Saat ini ${slotCount} slot terbuka.`}
+        </p>
 
         {/* Upcoming Slots */}
         <div className="mt-10">
@@ -187,7 +316,7 @@ export default function PsychologistSchedulePage() {
           {upcomingSlots.length === 0 ? (
             <div className="bg-white rounded-2xl p-8 text-center text-gray-400 border border-gray-100">
               <Clock className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">Belum ada konsultasi terjadwal pada hari-hari yang tersedia.</p>
+              <p className="text-sm">Belum ada konsultasi terjadwal.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -195,16 +324,10 @@ export default function PsychologistSchedulePage() {
                 <div key={c.id} className="bg-white rounded-xl px-5 py-4 border border-gray-100 shadow-sm flex items-center justify-between gap-4">
                   <div>
                     <p className="font-medium text-gray-900">{c.userName || "Pasien"}</p>
-                    <p className="text-sm text-gray-500">{formatDate(c.date!)} · {c.time || "-"}</p>
+                    <p className="text-sm text-gray-500">{c.date ? formatDate(c.date) : "-"} · {c.time || "-"}</p>
                   </div>
-                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                    c.status === "upcoming"
-                      ? "bg-blue-100 text-blue-700"
-                      : c.status === "cancelled"
-                      ? "bg-red-100 text-red-700"
-                      : "bg-green-100 text-green-700"
-                  }`}>
-                    {c.status === "upcoming" ? "Mendatang" : c.status === "cancelled" ? "Dibatalkan" : "Selesai"}
+                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${STATUS_BADGE[c.status] || "bg-gray-100 text-gray-600"}`}>
+                    {STATUS_LABEL[c.status] || c.status}
                   </span>
                 </div>
               ))}
@@ -216,8 +339,8 @@ export default function PsychologistSchedulePage() {
       {/* Toast */}
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-green-600 text-white px-5 py-3 rounded-2xl shadow-lg flex items-center gap-2 z-50 animate-fade-in">
-          <CheckCircle className="w-5 h-5" />
-          <span className="font-medium">Jadwal berhasil disimpan</span>
+          <CheckCircle className="w-5 h-5 flex-shrink-0" />
+          <span className="font-medium">{toast}</span>
         </div>
       )}
     </div>
