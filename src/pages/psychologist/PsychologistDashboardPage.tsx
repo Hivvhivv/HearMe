@@ -12,8 +12,8 @@ import {
 
 import PsychologistNavbar from "../../components/PsychologistNavbar";
 import Footer from "../../components/Footer";
-
-const API_URL = "http://localhost:5000/api";
+import { api } from "../../api/client";
+import { getStoredUser, saveUser } from "../../lib/authStorage";
 
 type VerificationStatus =
   | "pending"
@@ -50,34 +50,12 @@ export default function DashboardPage() {
         setLoading(true);
         setError("");
 
-        const token =
-          localStorage.getItem("hearme_token") ||
-          localStorage.getItem("token") ||
-          localStorage.getItem("authToken") ||
-          localStorage.getItem("accessToken");
-
-        if (!token) {
-          throw new Error("Token login tidak ditemukan");
-        }
-
-        const response = await fetch(
-          `${API_URL}/auth/me`,
-          {
-            method: "GET",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
-          }
+        // api client menyertakan token dari memori dan
+        // menangani refresh otomatis kalau token sudah
+        // kedaluwarsa.
+        const data = await api.get<{ user: User }>(
+          "/auth/me"
         );
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            data?.message || "Gagal mengambil data user"
-          );
-        }
 
         const currentUser = data.user;
 
@@ -89,15 +67,10 @@ export default function DashboardPage() {
         );
 
         // Update localStorage agar data lokal juga terbaru
-        localStorage.setItem(
-          "hearme_user",
-          JSON.stringify(currentUser)
-        );
-
-        localStorage.setItem(
-          "hearme_role",
-          currentUser.role || "psychologist"
-        );
+        saveUser({
+          ...currentUser,
+          role: currentUser.role || "psychologist",
+        });
 
       } catch (err) {
         console.error("Load user error:", err);
@@ -109,20 +82,14 @@ export default function DashboardPage() {
         );
 
         // Fallback ke localStorage
-        try {
-          const savedUser = JSON.parse(
-            localStorage.getItem("hearme_user") || "null"
+        const savedUser = getStoredUser<User>();
+
+        if (savedUser) {
+          setUser(savedUser);
+
+          setVerificationStatus(
+            savedUser.verificationStatus || "none"
           );
-
-          if (savedUser) {
-            setUser(savedUser);
-
-            setVerificationStatus(
-              savedUser.verificationStatus || "none"
-            );
-          }
-        } catch {
-          // ignore
         }
       } finally {
         setLoading(false);

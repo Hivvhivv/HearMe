@@ -1,10 +1,69 @@
 import express from "express";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 import { getDb } from "./db.js";
 import { ObjectId } from "mongodb";
 import { authenticate, authorize, requireVerifiedPsychologist } from "./auth.middleware.js";
+
+import { signAccessToken } from "./token.service.js";
+
+import {
+  createSession,
+  getActiveSession,
+  listSessions,
+  revokeAllSessions,
+  revokeSession,
+  revokeSessionByRefreshToken,
+  rotateSession
+} from "./session.service.js";
+
+import {
+  clearRefreshCookie,
+  getRefreshTokenFromRequest,
+  setRefreshCookie
+} from "./cookies.js";
+
 const router = express.Router();
+
+
+// ======================================================
+// HELPERS
+// ======================================================
+
+// Response yang memuat data user tidak boleh di-cache,
+// supaya data user lama tidak muncul kembali setelah
+// logout (termasuk dari back/forward cache browser).
+function noStore(res) {
+  res.set("Cache-Control", "no-store");
+  res.set("Pragma", "no-cache");
+}
+
+
+function clientInfo(req) {
+  return {
+    userAgent: req.headers["user-agent"] || "unknown",
+    ip:
+      (req.headers["x-forwarded-for"] || "")
+        .split(",")[0]
+        .trim() ||
+      req.socket?.remoteAddress ||
+      "unknown"
+  };
+}
+
+
+function publicUser(user) {
+  return {
+    id: user._id,
+    name: user.name,
+    username: user.username,
+    email: user.email,
+    gender: user.gender,
+    birthDate: user.birthDate,
+    phoneNumber: user.phoneNumber,
+    role: user.role,
+    verificationStatus: user.verificationStatus
+  };
+}
 
 router.get("/test", (req, res) => {
   res.json({
@@ -190,35 +249,302 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
-    const token = jwt.sign(
-      {
-        sub: user._id.toString(),
-        role: user.role,
-        verificationStatus: user.verificationStatus
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || "1d" }
+
+    // ----------------------------------------------------
+    // Buat session BARU untuk device ini.
+    //
+    // Tidak ada field session tunggal di dokumen user yang
+    // ditimpa, jadi login di device B TIDAK membatalkan
+    // session device A.
+    // ----------------------------------------------------
+
+    const { userAgent, ip } = clientInfo(req);
+
+    const session = await createSession({
+      userId: user._id,
+      userAgent,
+      ip
+    });
+
+    const token = signAccessToken({
+      userId: user._id,
+      role: user.role,
+      verificationStatus: user.verificationStatus,
+      sessionId: session.sessionId
+    });
+
+    setRefreshCookie(
+      res,
+      session.refreshToken,
+      session.expiresAt
     );
+
+    noStore(res);
 
     return res.json({
       message: "Login successful",
       token,
-      user: {
-        id: user._id,
-        name: user.name,
-        username: user.username,
-        email: user.email,
-        gender: user.gender,
-        birthDate: user.birthDate,
-        phoneNumber: user.phoneNumber,
-        role: user.role,
-        verificationStatus: user.verificationStatus
-      }
+      user: publicUser(user)
     });
-  } catch {
+  } catch (error) {
+    console.error("Login error:", error);
+
     return res.status(500).json({ message: "Internal server error" });
   }
 });
+
+
+// ======================================================
+// REFRESH
+// ======================================================
+//
+// Rotasi refresh token, HANYA untuk session (device)
+// yang mengirim token tersebut.
+//
+// Beberapa tab yang refresh bersamaan ditangani lewat
+// tenggang waktu: pemenang rotasi mengirim cookie baru,
+// yang lain tetap mendapat access token baru TANPA
+// mengubah cookie -- sehingga tidak ada yang ter-logout.
+//
+// ======================================================
+
+router.post("/refresh", async (req, res) => {
+  try {
+    const refreshToken = getRefreshTokenFromRequest(req);
+
+    if (!refreshToken) {
+      return res.status(401).json({
+        message: "Refresh token missing",
+        code: "NO_REFRESH_TOKEN"
+      });
+    }
+
+    const { userAgent, ip } = clientInfo(req);
+
+    const result = await rotateSession(refreshToken, {
+      userAgent,
+      ip
+    });
+
+    if (
+      result.status === "invalid" ||
+      result.status === "reused"
+    ) {
+      clearRefreshCookie(res);
+
+      return res.status(401).json({
+        message:
+          result.status === "reused"
+            ? "Refresh token already used"
+            : "Invalid refresh token",
+        code:
+          result.status === "reused"
+            ? "REFRESH_REUSED"
+            : "REFRESH_INVALID"
+      });
+    }
+
+    const db = await getDb();
+
+    const user = await db.collection("users").findOne(
+      {
+        _id: result.session.userId
+      },
+      {
+        projection: { passwordHash: 0 }
+      }
+    );
+
+    if (!user || user.isActive === false) {
+      await revokeSession(result.session._id.toString());
+
+      clearRefreshCookie(res);
+
+      return res.status(401).json({
+        message: "Account is not active",
+        code: "ACCOUNT_INACTIVE"
+      });
+    }
+
+    const token = signAccessToken({
+      userId: user._id,
+      role: user.role,
+      verificationStatus: user.verificationStatus,
+      sessionId: result.session._id.toString()
+    });
+
+    // Cookie HANYA diperbarui oleh pemenang rotasi.
+    // Pada jalur "grace", cookie dibiarkan apa adanya.
+    if (result.status === "rotated") {
+      setRefreshCookie(
+        res,
+        result.refreshToken,
+        result.session.expiresAt
+      );
+    }
+
+    noStore(res);
+
+    return res.json({
+      message: "Token refreshed",
+      token,
+      user: publicUser(user)
+    });
+
+  } catch (error) {
+    console.error("Refresh error:", error);
+
+    return res.status(500).json({
+      message: "Failed to refresh token"
+    });
+  }
+});
+
+
+// ======================================================
+// LOGOUT (DEVICE INI SAJA)
+// ======================================================
+//
+// Session device ini di-revoke di SERVER, lalu cookie
+// dihapus dengan opsi yang sama seperti saat dibuat.
+//
+// Device lain milik user yang sama tetap login.
+//
+// Sengaja TIDAK memakai middleware authenticate: access
+// token bisa saja sudah kedaluwarsa, tapi user tetap
+// harus bisa logout. Cookie refresh token sudah cukup
+// untuk menentukan session mana yang diakhiri.
+//
+// ======================================================
+
+router.post("/logout", async (req, res) => {
+  try {
+    const refreshToken = getRefreshTokenFromRequest(req);
+
+    if (refreshToken) {
+      await revokeSessionByRefreshToken(refreshToken);
+    }
+
+    clearRefreshCookie(res);
+
+    noStore(res);
+
+    return res.json({
+      message: "Logout successful"
+    });
+
+  } catch (error) {
+    console.error("Logout error:", error);
+
+    // Tetap hapus cookie walaupun revoke gagal.
+    clearRefreshCookie(res);
+
+    return res.json({
+      message: "Logout completed with errors"
+    });
+  }
+});
+
+
+// ======================================================
+// LOGOUT DARI SEMUA DEVICE
+// ======================================================
+
+router.post("/logout-all", authenticate, async (req, res) => {
+  try {
+    const count = await revokeAllSessions(req.user.sub);
+
+    clearRefreshCookie(res);
+
+    noStore(res);
+
+    return res.json({
+      message: "Logged out from all devices",
+      revokedSessions: count
+    });
+
+  } catch (error) {
+    console.error("Logout all error:", error);
+
+    return res.status(500).json({
+      message: "Failed to logout from all devices"
+    });
+  }
+});
+
+
+// ======================================================
+// DAFTAR DEVICE AKTIF
+// ======================================================
+
+router.get("/sessions", authenticate, async (req, res) => {
+  try {
+    const sessions = await listSessions(req.user.sub);
+
+    noStore(res);
+
+    return res.json({
+      sessions: sessions.map((session) => ({
+        ...session,
+        // Tandai device yang sedang dipakai sekarang.
+        current: session.id === req.user.sid
+      }))
+    });
+
+  } catch (error) {
+    console.error("List sessions error:", error);
+
+    return res.status(500).json({
+      message: "Failed to list sessions"
+    });
+  }
+});
+
+
+// ======================================================
+// AKHIRI SATU DEVICE TERTENTU
+// ======================================================
+
+router.delete(
+  "/sessions/:id",
+  authenticate,
+  async (req, res) => {
+    try {
+      const session = await getActiveSession(req.params.id);
+
+      // Hanya boleh mengakhiri session MILIK SENDIRI.
+      if (
+        !session ||
+        session.userId.toString() !== req.user.sub
+      ) {
+        return res.status(404).json({
+          message: "Session not found"
+        });
+      }
+
+      await revokeSession(req.params.id);
+
+      // Kalau yang diakhiri adalah device ini sendiri,
+      // cookie-nya juga harus dibersihkan.
+      if (req.params.id === req.user.sid) {
+        clearRefreshCookie(res);
+      }
+
+      noStore(res);
+
+      return res.json({
+        message: "Session ended"
+      });
+
+    } catch (error) {
+      console.error("Revoke session error:", error);
+
+      return res.status(500).json({
+        message: "Failed to end session"
+      });
+    }
+  }
+);
 
    // Verification user ini 
 router.get("/me", authenticate, async (req, res) => {
@@ -242,6 +568,8 @@ router.get("/me", authenticate, async (req, res) => {
       });
     }
 
+    noStore(res);
+
     return res.json({
       user
     });
@@ -255,114 +583,22 @@ router.get("/me", authenticate, async (req, res) => {
   }
 });
 
-router.patch(
-  "/users/:id/status",
-  authenticate,
-  authorize("admin", "super_admin"),
-  async (req, res) => {
-    try {
-      const { isActive } = req.body;
 
-      if (typeof isActive !== "boolean") {
-        return res.status(400).json({
-          message: "isActive must be boolean"
-        });
-      }
-
-      const db = await getDb();
-
-      const result = await db.collection("users").updateOne(
-        {
-          _id: new ObjectId(req.params.id)
-        },
-        {
-          $set: {
-            isActive,
-            updatedAt: new Date()
-          }
-        }
-      );
-
-      if (!result.matchedCount) {
-        return res.status(404).json({
-          message: "User not found"
-        });
-      }
-
-      return res.json({
-        message: "User status updated"
-      });
-    } catch (error) {
-      console.error("Update user status error:", error);
-
-      return res.status(500).json({
-        message: "Failed to update user status"
-      });
-    }
-  }
-);
-
-
-//Verification psychologist ini
-router.get(
-  "/psychologist-test",
-  authenticate,
-  requireVerifiedPsychologist,
-  async (req, res) => {
-    return res.json({
-      ok: true,
-      message: "Psychologist access granted",
-      user: req.user
-    });
-  }
-);
-
-router.patch(
-  "/psychologists/:id/verification",
-  authenticate,
-  authorize("admin", "super_admin"),
-  async (req, res) => {
-    try {
-      const { status } = req.body;
-
-      if (!["approved", "rejected", "pending"].includes(status)) {
-        return res.status(400).json({
-          message: "Invalid verification status"
-        });
-      }
-
-      const db = await getDb();
-
-      const result = await db.collection("users").updateOne(
-        {
-          _id: new ObjectId(req.params.id),
-          role: "psychologist"
-        },
-        {
-          $set: {
-            verificationStatus: status,
-            updatedAt: new Date()
-          }
-        }
-      );
-
-      if (!result.matchedCount) {
-        return res.status(404).json({
-          message: "Psychologist account not found"
-        });
-      }
-
-      return res.json({
-        message: `Psychologist ${status}`
-      });
-    } catch (error) {
-      console.error("Update psychologist verification error:", error);
-
-      return res.status(500).json({
-        message: "Failed to update psychologist verification"
-      });
-    }
-  }
-);
+// ======================================================
+// CATATAN: route admin DIPINDAH, tidak diduplikasi.
+//
+// PATCH /users/:id/status dan
+// PATCH /psychologists/:id/verification
+//
+// sebelumnya ADA DI DUA TEMPAT: di sini dan di
+// admin.routes.js, dengan isi yang sama.
+//
+// Yang dipertahankan hanya versi di admin.routes.js:
+//
+//   PATCH /api/admin/users/:id/status
+//   PATCH /api/admin/psychologists/:id/verification
+//
+// supaya semua aksi admin berada di satu namespace.
+// ======================================================
 
 export default router;

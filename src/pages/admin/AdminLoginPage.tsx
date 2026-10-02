@@ -1,39 +1,87 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Lock, User, Eye, EyeOff, Brain } from "lucide-react";
+import { useAuth } from "../../contexts/AuthContext";
+
+// ======================================================
+// ADMIN LOGIN
+// ======================================================
+//
+// Sebelumnya halaman ini mencocokkan email dan password
+// HARDCODE di JavaScript frontend, lalu menulis
+// localStorage "hearme_admin_session" sebagai tanda
+// "sudah jadi admin".
+//
+// Dua masalah fatalnya:
+//
+//   1. Kredensial itu ikut ter-bundle ke dist/ dan bisa
+//      dibaca siapa pun yang membuka source.
+//   2. Tanpa backend sama sekali, cukup mengisi
+//      localStorage sendiri untuk menjadi admin.
+//
+// Sekarang login admin memakai endpoint yang sama dengan
+// login biasa (POST /api/auth/login), dan status admin
+// ditentukan oleh ROLE DI DATABASE.
+//
+// ======================================================
 
 export default function AdminLoginPage() {
   const navigate = useNavigate();
+
+  const {
+    login,
+    loading: authLoading,
+    isAuthenticated,
+    role,
+    logout,
+  } = useAuth();
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Kalau sudah login sebagai admin, langsung masuk.
   useEffect(() => {
-    const session = localStorage.getItem("hearme_admin_session");
-    if (session) {
-      navigate("/admin/dashboard");
+    if (authLoading) return;
+
+    if (
+      isAuthenticated &&
+      (role === "admin" || role === "super_admin")
+    ) {
+      navigate("/admin/dashboard", { replace: true });
     }
-  }, [navigate]);
+  }, [authLoading, isAuthenticated, role, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
-    await new Promise((r) => setTimeout(r, 600));
+    try {
+      const user = await login(username.trim(), password);
 
-    if (username === "admin@hearme.id" && password === "admin123") {
-      localStorage.setItem(
-        "hearme_admin_session",
-        JSON.stringify({ role: "admin", name: "Admin HearMe" })
+      // Role diverifikasi dari data server, bukan dari form.
+      if (user.role !== "admin" && user.role !== "super_admin") {
+        // Bukan admin: akhiri session supaya tidak ada
+        // akun biasa yang "menggantung" di area admin.
+        await logout();
+
+        setError("Akun ini tidak memiliki akses admin.");
+        return;
+      }
+
+      navigate("/admin/dashboard", { replace: true });
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Email atau password salah."
       );
-      navigate("/admin/dashboard");
-    } else {
-      setError("Username atau password salah.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -89,7 +137,7 @@ export default function AdminLoginPage() {
                   type="email"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="admin@hearme.id"
+                  placeholder="email@domain.com"
                   required
                   className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:border-transparent transition"
                   style={{ fontFamily: "Inter, sans-serif" }}
@@ -145,20 +193,20 @@ export default function AdminLoginPage() {
             </button>
           </form>
 
-          {/* Demo credentials */}
-          <div
-            className="mt-6 p-3 rounded-lg border text-xs"
+          {/* Blok "Demo Credentials" DIHAPUS.
+              Sebelumnya email dan password admin tercetak
+              langsung di halaman dan ikut ter-bundle ke
+              dist/, sehingga bisa dibaca siapa pun. */}
+          <p
+            className="mt-6 text-xs text-center"
             style={{
-              background: "#FAF8FD",
-              borderColor: "#C9A9E9",
               color: "#6F3FB5",
               fontFamily: "Inter, sans-serif",
             }}
           >
-            <p className="font-semibold mb-1">Demo Credentials:</p>
-            <p>Email: admin@hearme.id</p>
-            <p>Password: admin123</p>
-          </div>
+            Gunakan akun admin terdaftar. Akses ditentukan oleh
+            role pada database.
+          </p>
         </div>
       </div>
     </div>

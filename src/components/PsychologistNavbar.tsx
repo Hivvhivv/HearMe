@@ -14,7 +14,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import Logo from "./Logo";
-import { verificationAPI } from "../api/verification.api";
+import { useAuth } from "../contexts/AuthContext";
 
 type VerificationStatus =
   | "pending"
@@ -69,88 +69,48 @@ export default function PsychologistNavbar() {
   // USER
   // ======================================================
 
-  const savedUser = localStorage.getItem("hearme_user");
+  const {
+    user,
+    loading: authLoading,
+    logout: doLogout,
+  } = useAuth();
 
-  const user = savedUser
-    ? JSON.parse(savedUser)
-    : {
-        name: "Psikolog",
-      };
-
-  const name = user?.name || "Psikolog";
+  const name = (user?.name as string) || "Psikolog";
 
   // ======================================================
-  // LOAD VERIFICATION STATUS FROM BACKEND / MONGODB
+  // STATUS VERIFIKASI
+  // ======================================================
+  //
+  // Diambil dari AuthContext, yang sudah memanggil
+  // /api/auth/me saat app dibuka.
+  //
+  // Dulu komponen ini memanggil /auth/me sendiri dan
+  // membaca token dari localStorage. Itu tidak lagi bisa:
+  // access token sekarang hanya ada di MEMORI dan baru
+  // terisi setelah bootstrap selesai -- jadi pemanggilan
+  // saat mount akan selalu kehabisan token dan salah
+  // menyimpulkan status "none".
+  //
   // ======================================================
 
   useEffect(() => {
-  const loadVerification = async () => {
-    try {
-      const token =
-        localStorage.getItem("hearme_token");
+    // Tunggu pengecekan session selesai.
+    if (authLoading) {
+      return;
+    }
 
-      if (!token) {
-        setVerificationStatus("none");
-        return;
-      }
+    const status = user?.verificationStatus;
 
-      const response = await fetch(
-        "http://localhost:5000/api/auth/me",
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data?.message ||
-            "Gagal mengambil status verifikasi"
-        );
-      }
-
-      const status =
-        data.user?.verificationStatus;
-
-      console.log(
-        "Verification status from backend:",
-        status
-      );
-
-      if (
-        status === "approved" ||
-        status === "pending" ||
-        status === "rejected"
-      ) {
-        setVerificationStatus(status);
-      } else {
-        setVerificationStatus("none");
-      }
-
-      // Update user di localStorage
-      if (data.user) {
-        localStorage.setItem(
-          "hearme_user",
-          JSON.stringify(data.user)
-        );
-      }
-    } catch (error) {
-      console.error(
-        "Failed to load verification status:",
-        error
-      );
-
+    if (
+      status === "approved" ||
+      status === "pending" ||
+      status === "rejected"
+    ) {
+      setVerificationStatus(status);
+    } else {
       setVerificationStatus("none");
     }
-  };
-
-  loadVerification();
-}, []);
+  }, [authLoading, user]);
 
   const isApproved =
     verificationStatus === "approved";
@@ -159,13 +119,12 @@ export default function PsychologistNavbar() {
   // LOGOUT
   // ======================================================
 
-  const logout = () => {
-    localStorage.removeItem("hearme_auth");
-    localStorage.removeItem("hearme_role");
-    localStorage.removeItem("hearme_user");
-    localStorage.removeItem("hearme_token");
+  const logout = async () => {
+    // Revoke session device ini di server, lalu bersihkan
+    // state lokal. Device lain tetap login.
+    await doLogout();
 
-    navigate("/");
+    navigate("/sign-in", { replace: true });
   };
 
   // ======================================================

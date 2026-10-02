@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../contexts/AuthContext";
 import { FileText, CheckCircle, XCircle, Clock, X, Eye, Download, Image as ImageIcon, History, ChevronDown, ChevronUp } from "lucide-react";
 import AdminSidebar from "../../components/AdminSidebar";
 
@@ -215,6 +216,19 @@ function statusBadge(status: string) {
 
 export default function AdminVerificationPage() {
   const navigate = useNavigate();
+
+// ======================================================
+// SESSION ADMIN
+// ======================================================
+//
+// Dulu halaman ini membaca localStorage
+// "hearme_admin_session" -- yang bisa diisi siapa pun
+// dari console browser untuk berpura-pura jadi admin.
+//
+// Sekarang identitas admin berasal dari AuthContext
+// (role di database), dan route dilindungi AdminRoute.
+// ======================================================
+  const { user: authUser, logout: doLogout } = useAuth();
   const [session, setSession] = useState<{ name: string; role: string } | null>(null);
   const [verifications, setVerifications] = useState<VerificationSubmission[]>([]);
   const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "approved" | "rejected">("all");
@@ -227,9 +241,10 @@ export default function AdminVerificationPage() {
   const [historyTarget, setHistoryTarget] = useState<string | null>(null);
 
   useEffect(() => {
-    const raw = localStorage.getItem("hearme_admin_session");
-    if (!raw) { navigate("/admin/login"); return; }
-    setSession(JSON.parse(raw));
+    setSession({
+      role: String(authUser?.role || "admin"),
+      name: String(authUser?.name || "Admin HearMe"),
+    });
     setVerifications(loadVerifications());
   }, [navigate]);
 
@@ -316,7 +331,7 @@ export default function AdminVerificationPage() {
 
   return (
     <div className="flex min-h-screen" style={{ backgroundColor: "#FAF8FD" }}>
-      <AdminSidebar session={session} onLogout={() => { localStorage.removeItem("hearme_admin_session"); navigate("/admin/login"); }} />
+      <AdminSidebar session={session} onLogout={async () => { await doLogout(); navigate("/admin/login", { replace: true }); }} />
 
       <main className="flex-1 px-8 py-8 overflow-auto">
         <div className="mb-6">

@@ -1,24 +1,91 @@
+import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, Star, Calendar, Clock, MessageCircle } from "lucide-react";
 import DashboardNavbar from "../components/DashboardNavbar";
 import Footer from "../components/Footer";
-import { psychologists } from "../data/mockData";
+import {
+  psychologistAPI,
+  type ApiPsychologist,
+} from "../api/psychologist.api";
 
 // ======================================================
-// ## DATABASE TEMPLATE IF CONNECTED ##
-// psychologists table: id, name, specialization, rating, experience, profile_photo, consultation_fee, availability
-// SELECT * FROM psychologists WHERE id = ?
+// DETAIL PSIKOLOG — DARI MONGODB
+// ======================================================
+//
+// GET /api/psychologists/:id
+//
+// Backend membalas 404 baik untuk psikolog yang tidak ada
+// MAUPUN yang belum approved -- supaya keberadaan akun
+// yang belum diverifikasi tidak bocor.
+//
 // ======================================================
 
 export default function PsychologistDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const psych = psychologists.find((p) => p.id === id);
+
+  const [psych, setPsych] = useState<ApiPsychologist | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      if (!id) return;
+
+      try {
+        setLoading(true);
+        setError("");
+
+        const data = await psychologistAPI.getById(id);
+
+        if (!cancelled) setPsych(data);
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Gagal mengambil data psikolog"
+          );
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  if (loading) return (
+    <div className="min-h-screen bg-[#FAF8FD]">
+      <DashboardNavbar />
+      <div className="max-w-3xl mx-auto px-4 py-16 flex flex-col items-center gap-4">
+        <div className="w-10 h-10 border-4 border-purple-100 border-t-[#6F3FB5] rounded-full animate-spin" />
+        <p className="text-sm text-gray-500">Memuat data psikolog...</p>
+      </div>
+    </div>
+  );
 
   if (!psych) return (
     <div className="min-h-screen bg-[#FAF8FD]">
       <DashboardNavbar />
-      <div className="flex items-center justify-center h-64 text-gray-400">Psikolog tidak ditemukan.</div>
+      <div className="max-w-3xl mx-auto px-4 py-16 text-center">
+        <div className="bg-white rounded-3xl border border-purple-50 p-8">
+          <div className="text-4xl mb-3">🔍</div>
+          <p className="font-semibold text-gray-700">Psikolog tidak ditemukan</p>
+          <p className="text-sm text-gray-500 mt-1 mb-6">
+            {error || "Psikolog ini mungkin belum terverifikasi."}
+          </p>
+          <Link to="/psychologists" className="inline-block bg-[#6F3FB5] text-white font-semibold px-6 py-2.5 rounded-xl hover:bg-purple-800 transition-colors text-sm">
+            Lihat psikolog lain
+          </Link>
+        </div>
+      </div>
     </div>
   );
 

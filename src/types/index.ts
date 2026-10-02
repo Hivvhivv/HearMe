@@ -167,6 +167,8 @@ export interface Consultation {
   status:
     | "pending"
     | "approved"
+    // Dihasilkan POST /api/consultations/:id/reschedule
+    | "rescheduled"
     | "upcoming"
     | "active"
     | "completed"

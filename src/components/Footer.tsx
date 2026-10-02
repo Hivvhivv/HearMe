@@ -1,10 +1,15 @@
 import { Link, useNavigate } from "react-router-dom";
-import { authService } from "../services";
+import { useAuth } from "../contexts/AuthContext";
 import Logo from "./Logo";
 
 export default function Footer() {
   const navigate = useNavigate();
-  const authed = authService.isAuthenticated();
+
+  // Dari context, bukan membaca localStorage langsung.
+  // Pembacaan langsung tidak reaktif: status login
+  // dipastikan ke backend secara asinkron, jadi nilainya
+  // belum siap pada render pertama.
+  const { isAuthenticated: authed } = useAuth();
 
   const featureLinks: { label: string; to: string }[] = [
     { label: "AI Listener", to: "/ai-listener" },

@@ -120,20 +120,27 @@ router.patch("/:id/status", authenticate, async (req, res) => {
   }
 });
 
+// PENTING: /schedules/mine HARUS dideklarasikan SEBELUM
+// /schedules/:psychologistId.
+//
+// Sebelumnya urutannya terbalik, sehingga route "mine" di
+// bawah menjadi dead code dan ditangani lewat workaround
+// if (params === "mine") di dalam route ber-parameter.
+router.get("/schedules/mine", authenticate, authorize("psychologist"), async (req, res) => {
+  try {
+    const actorId = userId(req, res);
+    if (!actorId) return;
+    const schedules = await (await getDb()).collection("schedules")
+      .find({ psychologistId: actorId }).sort({ date: 1, time: 1 }).toArray();
+    return res.json({ schedules });
+  } catch (error) {
+    console.error("Get own schedules error:", error);
+    return res.status(500).json({ message: "Failed to get schedules" });
+  }
+});
+
 router.get("/schedules/:psychologistId", authenticate, async (req, res) => {
   try {
-    // Express mencocokkan route ini sebelum /schedules/mine.
-    // Tangani path khusus tersebut di sini agar tidak dianggap ObjectId.
-    if (req.params.psychologistId === "mine") {
-      if (req.user.role !== "psychologist") {
-        return res.status(403).json({ message: "Psychologist access only" });
-      }
-      const actorId = userId(req, res);
-      if (!actorId) return;
-      const schedules = await (await getDb()).collection("schedules")
-        .find({ psychologistId: actorId }).sort({ date: 1, time: 1 }).toArray();
-      return res.json({ schedules });
-    }
     if (!ObjectId.isValid(req.params.psychologistId)) return res.status(400).json({ message: "Invalid psychologist ID" });
     const schedules = await (await getDb()).collection("schedules").find({
       psychologistId: new ObjectId(req.params.psychologistId), isAvailable: true
@@ -143,12 +150,6 @@ router.get("/schedules/:psychologistId", authenticate, async (req, res) => {
     console.error("Get schedules error:", error);
     return res.status(500).json({ message: "Failed to get schedules" });
   }
-});
-
-router.get("/schedules/mine", authenticate, authorize("psychologist"), async (req, res) => {
-  const actorId = userId(req, res); if (!actorId) return;
-  const schedules = await (await getDb()).collection("schedules").find({ psychologistId: actorId }).sort({ date: 1, time: 1 }).toArray();
-  return res.json({ schedules });
 });
 
 router.post("/schedules/mine", authenticate, authorize("psychologist"), async (req, res) => {
@@ -163,6 +164,98 @@ router.post("/schedules/mine", authenticate, authorize("psychologist"), async (r
   } catch (error) {
     if (error?.code === 11000) return res.status(409).json({ message: "Schedule slot already exists" });
     return res.status(500).json({ message: "Failed to create schedule" });
+  }
+});
+
+// ======================================================
+// POST /api/consultations/:id/reschedule
+// ======================================================
+//
+// Spec section 14: psikolog dapat Reschedule, dan jadwal
+// baru juga HARUS dicek agar tidak bentrok.
+//
+// Hanya psikolog PEMILIK consultation yang boleh -- lewat
+// findConsultationForUser yang memfilter psychologistId
+// dengan id dari JWT, bukan dari body.
+//
+// Pengambilan slot baru bersifat atomic (findOneAndUpdate
+// dengan filter isAvailable: true), jadi dua reschedule
+// bersamaan ke slot yang sama tidak bisa keduanya berhasil.
+//
+// ======================================================
+
+router.post("/:id/reschedule", authenticate, authorize("psychologist"), async (req, res) => {
+  try {
+    const actorId = userId(req, res);
+    if (!actorId) return;
+
+    const { date, time } = req.body || {};
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) {
+      return res.status(400).json({ message: "Date must use YYYY-MM-DD format" });
+    }
+    if (!/^\d{2}:\d{2}$/.test(String(time || ""))) {
+      return res.status(400).json({ message: "Time must use HH:MM format" });
+    }
+
+    const db = await getDb();
+
+    const consultation = await findConsultationForUser(db, req.params.id, actorId, req.user.role);
+    if (!consultation) return res.status(404).json({ message: "Consultation not found" });
+
+    if (["cancelled", "completed"].includes(consultation.status)) {
+      return res.status(409).json({ message: "Consultation can no longer be rescheduled" });
+    }
+
+    // Slot baru harus milik psikolog ini dan masih kosong.
+    const target = await db.collection("schedules").findOne({
+      psychologistId: actorId, date, time
+    });
+
+    if (!target) {
+      return res.status(404).json({ message: "Schedule slot not found" });
+    }
+
+    const now = new Date();
+
+    // Ambil slot baru secara atomic.
+    const claimed = await db.collection("schedules").findOneAndUpdate(
+      { _id: target._id, isAvailable: true },
+      { $set: { isAvailable: false, bookedBy: consultation.userId, updatedAt: now } },
+      { returnDocument: "after" }
+    );
+
+    if (!claimed) {
+      return res.status(409).json({ message: "Jadwal sudah terisi" });
+    }
+
+    await db.collection("consultations").updateOne(
+      { _id: consultation._id },
+      {
+        $set: {
+          scheduleId: target._id,
+          date,
+          time,
+          scheduledAt: new Date(`${date}T${time}:00`),
+          status: "rescheduled",
+          updatedAt: now
+        }
+      }
+    );
+
+    // Bebaskan slot lama SETELAH slot baru berhasil diambil,
+    // supaya tidak ada kondisi kehilangan dua slot sekaligus.
+    if (consultation.scheduleId && String(consultation.scheduleId) !== String(target._id)) {
+      await db.collection("schedules").updateOne(
+        { _id: consultation.scheduleId },
+        { $set: { isAvailable: true, bookedBy: null, updatedAt: now } }
+      );
+    }
+
+    return res.json({ message: "Consultation rescheduled", date, time, status: "rescheduled" });
+  } catch (error) {
+    console.error("Reschedule consultation error:", error);
+    return res.status(500).json({ message: "Failed to reschedule consultation" });
   }
 });
 

@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, ChangeEvent } from "react"
 import { useNavigate } from "react-router-dom"
+import { useAuth } from "../../contexts/AuthContext"
 import AdminSidebar from "../../components/AdminSidebar"
 import {
   Plus,
@@ -52,7 +53,8 @@ interface MindHubArticle {
 type FilterTab = "Semua" | "Mind and Balance" | "Self-Care Corner"
 
 const STORAGE_KEY = "hearme_mindhub_admin"
-const SESSION_KEY = "hearme_admin_session"
+// SESSION_KEY dihapus: session admin tidak lagi disimpan
+// di localStorage, melainkan berasal dari AuthContext.
 
 
 function StatusBadge({ status }: { status: MindHubArticle["status"] }) {
@@ -325,6 +327,19 @@ function migrateItem(it: MindHubArticle): MindHubArticle {
 
 export default function AdminMindHubPage() {
   const navigate = useNavigate()
+
+// ======================================================
+// SESSION ADMIN
+// ======================================================
+//
+// Dulu halaman ini membaca localStorage
+// "hearme_admin_session" -- yang bisa diisi siapa pun
+// dari console browser untuk berpura-pura jadi admin.
+//
+// Sekarang identitas admin berasal dari AuthContext
+// (role di database), dan route dilindungi AdminRoute.
+// ======================================================
+  const { user: authUser, logout: doLogout } = useAuth()
   const [items, setItems] = useState<MindHubArticle[]>([])
   const [filter, setFilter] = useState<FilterTab>("Semua")
   const [modalOpen, setModalOpen] = useState(false)
@@ -332,15 +347,10 @@ export default function AdminMindHubPage() {
   const [deleteTarget, setDeleteTarget] = useState<MindHubArticle | null>(null)
 
   useEffect(() => {
-  const sessionRaw =
-    localStorage.getItem("hearme_admin_session");
-
-  if (!sessionRaw) {
-    navigate("/admin/login");
-    return;
-  }
-
-  setSession(JSON.parse(sessionRaw));
+  setSession({
+    role: String(authUser?.role || "admin"),
+    name: String(authUser?.name || "Admin HearMe"),
+  });
 
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -358,10 +368,8 @@ export default function AdminMindHubPage() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
   }
 
-  const handleLogout = () => {
-  localStorage.removeItem(
-    "hearme_admin_session"
-  );
+  const handleLogout = async () => {
+  await doLogout();
 
   navigate("/admin/login");
 };

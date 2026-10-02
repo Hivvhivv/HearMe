@@ -1,3 +1,5 @@
+import { apiFetch } from "./client";
+
 type VerificationDocumentPayload = {
   type: string;
   fileName: string;
@@ -5,61 +7,20 @@ type VerificationDocumentPayload = {
 };
 
 // ======================================================
-// BACKEND API
-// ======================================================
-
-const API_URL = "http://localhost:5000/api/verification";
-
-// ======================================================
-// TOKEN
-// ======================================================
-
-function getToken(): string | null {
-  return (
-    localStorage.getItem("hearme_token") ||
-    localStorage.getItem("token") ||
-    localStorage.getItem("authToken") ||
-    localStorage.getItem("accessToken")
-  );
-}
-// ======================================================
 // REQUEST HELPER
 // ======================================================
+//
+// Semua request lewat apiFetch: token otomatis, cookie
+// refresh ikut terkirim, dan 401 memicu single-flight
+// refresh lalu request diulang.
+//
+// ======================================================
 
-async function request<T>(
+function request<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const token = getToken();
-
-  const headers: HeadersInit = {
-    "Content-Type": "application/json",
-    ...(options.headers || {}),
-  };
-
-  if (token) {
-    (headers as Record<string, string>).Authorization =
-      `Bearer ${token}`;
-  }
-
-  const response = await fetch(
-    `${API_URL}${endpoint}`,
-    {
-      ...options,
-      headers,
-    }
-  );
-
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(
-      data?.message ||
-        `Request failed with status ${response.status}`
-    );
-  }
-
-  return data;
+  return apiFetch<T>(`/verification${endpoint}`, options);
 }
 
 // ======================================================

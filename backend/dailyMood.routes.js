@@ -1,4 +1,5 @@
 import express from "express";
+import { ObjectId } from "mongodb";
 import { getDb } from "./db.js";
 import { authenticate } from "./auth.middleware.js";
 
@@ -14,7 +15,9 @@ router.get("/today", authenticate, async (req, res) => {
   try {
     const db = await getDb();
 
-    const userId = req.user.sub;
+    // userId disimpan sebagai ObjectId, konsisten dengan
+    // collection lain (consultations, verification_submissions).
+    const userId = new ObjectId(req.user.sub);
 
     const date =
       req.query.date ||
@@ -63,7 +66,9 @@ router.get(
 
       const db = await getDb();
 
-      const userId = req.user.sub;
+      // userId disimpan sebagai ObjectId, konsisten dengan
+      // collection lain (consultations, verification_submissions).
+      const userId = new ObjectId(req.user.sub);
 
       const limit = Math.min(
         Math.max(
@@ -121,7 +126,9 @@ router.get(
 
       const db = await getDb();
 
-      const userId = req.user.sub;
+      // userId disimpan sebagai ObjectId, konsisten dengan
+      // collection lain (consultations, verification_submissions).
+      const userId = new ObjectId(req.user.sub);
 
       const date = req.query.date;
 
@@ -182,7 +189,9 @@ router.put(
       // USER ID DIAMBIL DARI JWT
       // -----------------------------------------------
 
-      const userId = req.user.sub;
+      // userId disimpan sebagai ObjectId, konsisten dengan
+      // collection lain (consultations, verification_submissions).
+      const userId = new ObjectId(req.user.sub);
 
 
       // -----------------------------------------------
@@ -324,7 +333,9 @@ router.delete(
 
       const db = await getDb();
 
-      const userId = req.user.sub;
+      // userId disimpan sebagai ObjectId, konsisten dengan
+      // collection lain (consultations, verification_submissions).
+      const userId = new ObjectId(req.user.sub);
 
       const { date } = req.params;
 
@@ -362,8 +373,7 @@ router.delete(
 
       });
 
-    }
-
+    } 
   }
 );
 

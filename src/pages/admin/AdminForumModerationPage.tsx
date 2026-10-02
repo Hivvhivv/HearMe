@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../contexts/AuthContext";
 import { Flag, Eye, Trash2, ShieldBan, X, CheckCircle, AlertTriangle, Image as ImageIcon } from "lucide-react";
 import AdminSidebar from "../../components/AdminSidebar";
 
@@ -245,6 +246,19 @@ function statusBadge(status: ForumReport["status"]) {
 
 export default function AdminForumModerationPage() {
   const navigate = useNavigate();
+
+// ======================================================
+// SESSION ADMIN
+// ======================================================
+//
+// Dulu halaman ini membaca localStorage
+// "hearme_admin_session" -- yang bisa diisi siapa pun
+// dari console browser untuk berpura-pura jadi admin.
+//
+// Sekarang identitas admin berasal dari AuthContext
+// (role di database), dan route dilindungi AdminRoute.
+// ======================================================
+  const { user: authUser, logout: doLogout } = useAuth();
   const [session, setSession] = useState<{ name: string; role: string } | null>(null);
   const [reports, setReports] = useState<ForumReport[]>([]);
   const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "reviewed" | "dismissed">("all");
@@ -253,9 +267,10 @@ export default function AdminForumModerationPage() {
   const [banTarget, setBanTarget] = useState<ForumReport | null>(null);
 
   useEffect(() => {
-    const raw = localStorage.getItem("hearme_admin_session");
-    if (!raw) { navigate("/admin/login"); return; }
-    setSession(JSON.parse(raw));
+    setSession({
+      role: String(authUser?.role || "admin"),
+      name: String(authUser?.name || "Admin HearMe"),
+    });
     setReports(loadReports());
   }, [navigate]);
 
@@ -337,7 +352,7 @@ export default function AdminForumModerationPage() {
 
   return (
     <div className="flex min-h-screen" style={{ backgroundColor: "#FAF8FD" }}>
-      <AdminSidebar session={session} onLogout={() => { localStorage.removeItem("hearme_admin_session"); navigate("/admin/login"); }} />
+      <AdminSidebar session={session} onLogout={async () => { await doLogout(); navigate("/admin/login", { replace: true }); }} />
 
       <main className="flex-1 px-8 py-8 overflow-auto">
         <div className="mb-6">

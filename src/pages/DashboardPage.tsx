@@ -14,8 +14,15 @@ import DashboardNavbar from "../components/DashboardNavbar";
 import MoodModal from "../components/MoodModal";
 import Footer from "../components/Footer";
 
-import { psychologists, articles } from "../data/mockData";
-import { authService } from "../services";
+// `psychologists` dari mockData TIDAK lagi dipakai:
+// Top Psychologist kini berasal dari MongoDB.
+// `articles` masih mock sampai Phase 7 (Mind Hub).
+import { articles } from "../data/mockData";
+import {
+  psychologistAPI,
+  type ApiPsychologist,
+} from "../api/psychologist.api";
+import { useAuth } from "../contexts/AuthContext";
 
 import {
   dailyMoodApi,
@@ -207,32 +214,77 @@ export default function DashboardPage() {
   // USER
   // ====================================================
 
-  const user =
-    authService.getUser();
+  const { user } = useAuth();
 
   const name =
-    user?.name || "User";
+    (user?.name as string) || "User";
+
+
+  // ====================================================
+  // TOP PSYCHOLOGIST DARI MONGODB
+  // ====================================================
+  //
+  // Urutan (rating DESC, lalu ratingCount DESC) dan filter
+  // "hanya approved" ditentukan BACKEND, bukan di sini.
+  //
+  // ====================================================
+
+  const [topPsychologists, setTopPsychologists] =
+    useState<ApiPsychologist[]>([]);
+
+  const [topLoading, setTopLoading] = useState(true);
+  const [topError, setTopError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadTop = async () => {
+      try {
+        setTopLoading(true);
+        setTopError("");
+
+        const list = await psychologistAPI.top(4);
+
+        if (!cancelled) setTopPsychologists(list);
+      } catch (err) {
+        if (!cancelled) {
+          setTopError(
+            err instanceof Error
+              ? err.message
+              : "Gagal mengambil data psikolog"
+          );
+        }
+      } finally {
+        if (!cancelled) setTopLoading(false);
+      }
+    };
+
+    loadTop();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
 
   // ====================================================
   // CURRENT AUTH TOKEN
   // ====================================================
   //
-  // Token digunakan sebagai dependency agar ketika
-  // user login dengan akun berbeda, Dashboard mengambil
-  // ulang data Daily Mood.
+  // Dipakai sebagai dependency effect, supaya ketika
+  // user berganti akun Dashboard mengambil ulang data
+  // Daily Mood.
   //
-  // User A:
-  // token A
-  //
-  // User B:
-  // token B
-  //
-  // token berubah → effect dijalankan kembali.
+  // Dulu memakai access token. Itu tidak cocok lagi:
+  // token sekarang DIROTASI setiap refresh, jadi effect
+  // akan ikut berjalan ulang tanpa alasan. Identitas user
+  // adalah penanda yang benar.
   // ====================================================
 
   const currentToken =
-    authService.getToken();
+    (user?.id as string) ||
+    (user?._id as string) ||
+    null;
 
 
   // ====================================================
@@ -905,10 +957,41 @@ export default function DashboardPage() {
           </div>
 
 
+          {/* LOADING */}
+          {topLoading && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="bg-white rounded-2xl p-4 border border-purple-50 animate-pulse">
+                  <div className="w-14 h-14 rounded-2xl bg-purple-100 mb-3" />
+                  <div className="h-3.5 bg-purple-100 rounded w-3/4 mb-2" />
+                  <div className="h-3 bg-purple-50 rounded w-1/2 mb-2" />
+                  <div className="h-3 bg-purple-50 rounded w-1/3" />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ERROR */}
+          {!topLoading && topError && (
+            <div className="bg-white rounded-2xl border border-red-100 p-6 text-center">
+              <p className="text-sm font-semibold text-red-500">
+                Gagal mengambil data psikolog
+              </p>
+              <p className="text-xs text-gray-500 mt-1">{topError}</p>
+            </div>
+          )}
+
+          {/* EMPTY */}
+          {!topLoading && !topError && topPsychologists.length === 0 && (
+            <div className="bg-white rounded-2xl border border-purple-50 p-8 text-center text-gray-400">
+              <div className="text-3xl mb-2">🧑‍⚕️</div>
+              <p className="text-sm font-semibold">Belum ada psikolog tersedia</p>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 
-            {psychologists
-              .slice(0, 4)
+            {!topLoading && !topError && topPsychologists
               .map((p) => (
 
                 <Link
@@ -952,14 +1035,17 @@ export default function DashboardPage() {
 
                     <span className="font-semibold text-gray-700">
 
-                      {p.rating}
+                      {/* rating null = belum ada ulasan */}
+                      {p.rating ?? "Baru"}
 
                     </span>
 
 
                     <span className="text-gray-400 ml-1">
 
-                      {p.consultations}
+                      {p.ratingCount > 0
+                        ? `${p.ratingCount} ulasan`
+                        : p.consultations}
 
                     </span>
 

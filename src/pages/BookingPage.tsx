@@ -1,18 +1,34 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, Calendar, Clock, CheckCircle, CreditCard, Smartphone, QrCode } from "lucide-react";
 import DashboardNavbar from "../components/DashboardNavbar";
-import { psychologists } from "../data/mockData";
 import { consultationService } from "../services";
+import {
+  psychologistAPI,
+  type ApiPsychologist,
+} from "../api/psychologist.api";
 
 // ======================================================
-// ## DATABASE TEMPLATE IF CONNECTED ##
-// psychologists, consultations, payments tables
+// BOOKING — KETERSEDIAAN DARI BACKEND
+// ======================================================
+//
+// Sebelumnya slot waktu adalah array HARDCODE di file ini,
+// jadi user bisa memilih jam yang sebenarnya tidak dibuka
+// psikolog, atau yang sudah terisi orang lain.
+//
+// Sekarang:
+//
+//   GET /api/psychologists/:id/availability?date=...
+//
+// Backend yang menentukan slot mana yang ada dan masih
+// kosong. Saat booking dikirim, backend MEMERIKSA ULANG
+// secara atomic -- jadi kalau slot baru saja diambil
+// orang lain, responsnya 409 dan UI menampilkannya.
+//
 // ## PAYMENT API TEMPLATE ##
 // Midtrans / Xendit / Stripe integration point
 // ======================================================
 
-const timeSlots = ["08:00", "09:00", "10:00", "11:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
 type Step = "date" | "time" | "confirm" | "payment" | "success";
 type PayMethod = "bank_transfer" | "e_wallet" | "qris";
 
@@ -42,16 +58,117 @@ function parseFee(price: string): number {
 export default function BookingPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const psych = psychologists.find((p) => p.id === id);
+
+  const [psych, setPsych] = useState<ApiPsychologist | null>(null);
+  const [psychLoading, setPsychLoading] = useState(true);
 
   const [step, setStep] = useState<Step>("date");
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedTime, setSelectedTime] = useState("");
   const [payMethod, setPayMethod] = useState<PayMethod>("bank_transfer");
   const [loading, setLoading] = useState(false);
+  const [bookingError, setBookingError] = useState("");
+
+  // Slot yang benar-benar tersedia, dari backend.
+  const [slots, setSlots] = useState<string[]>([]);
+  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slotsError, setSlotsError] = useState("");
 
   const days = getNext14Days();
   const dayLabel = days.find((d) => d.key === selectedDate);
+
+  // ====================================================
+  // DATA PSIKOLOG
+  // ====================================================
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      if (!id) return;
+
+      try {
+        setPsychLoading(true);
+        const data = await psychologistAPI.getById(id);
+        if (!cancelled) setPsych(data);
+      } catch {
+        if (!cancelled) setPsych(null);
+      } finally {
+        if (!cancelled) setPsychLoading(false);
+      }
+    };
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  // ====================================================
+  // SLOT TERSEDIA UNTUK TANGGAL TERPILIH
+  // ====================================================
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSlots = async () => {
+      if (!id || !selectedDate) {
+        setSlots([]);
+        return;
+      }
+
+      try {
+        setSlotsLoading(true);
+        setSlotsError("");
+
+        const available = await psychologistAPI.availability(
+          id,
+          selectedDate
+        );
+
+        if (cancelled) return;
+
+        setSlots(available.map((s) => s.time));
+
+        // Kalau jam yang sudah dipilih ternyata tidak lagi
+        // tersedia, lepaskan pilihannya.
+        setSelectedTime((current) =>
+          current &&
+          !available.some((s) => s.time === current)
+            ? ""
+            : current
+        );
+      } catch (err) {
+        if (cancelled) return;
+
+        setSlotsError(
+          err instanceof Error
+            ? err.message
+            : "Gagal mengambil jadwal"
+        );
+        setSlots([]);
+      } finally {
+        if (!cancelled) setSlotsLoading(false);
+      }
+    };
+
+    loadSlots();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, selectedDate]);
+
+  if (psychLoading) return (
+    <div className="min-h-screen bg-[#FAF8FD]">
+      <DashboardNavbar />
+      <div className="max-w-xl mx-auto px-4 py-16 flex flex-col items-center gap-4">
+        <div className="w-10 h-10 border-4 border-purple-100 border-t-[#6F3FB5] rounded-full animate-spin" />
+        <p className="text-sm text-gray-500">Memuat data psikolog...</p>
+      </div>
+    </div>
+  );
 
   if (!psych) return (
     <div className="min-h-screen bg-[#FAF8FD]">
@@ -77,14 +194,56 @@ export default function BookingPage() {
     // snap.pay(token)
     // ======================================================
     setLoading(true);
-    const consult = await consultationService.book({
-      psychologistId: psych.id,
-      date: selectedDate,
-      time: selectedTime,
-      psychologistName: psych.name,
-      psychologistAvatar: psych.avatar,
-      fee,
-    });
+    setBookingError("");
+
+    let consult: { id: string };
+
+    try {
+      // Backend MEMERIKSA ULANG ketersediaan slot secara
+      // atomic. Kalau slot baru saja diambil user lain,
+      // responsnya 409 -- bukan booking ganda.
+      consult = await consultationService.book({
+        psychologistId: psych.id,
+        date: selectedDate,
+        time: selectedTime,
+        psychologistName: psych.name,
+        psychologistAvatar: psych.avatar,
+        fee,
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Gagal membuat booking";
+
+      setBookingError(
+        /terisi|unavailable|just booked/i.test(message)
+          ? "Jadwal ini baru saja terisi. Silakan pilih waktu lain."
+          : message
+      );
+
+      // Kembalikan user ke pemilihan waktu dan segarkan
+      // daftar slot supaya yang sudah terisi hilang.
+      setStep("time");
+      setSelectedTime("");
+      setLoading(false);
+
+      if (id && selectedDate) {
+        try {
+          const refreshed =
+            await psychologistAPI.availability(
+              id,
+              selectedDate
+            );
+          setSlots(refreshed.map((s) => s.time));
+        } catch {
+          // Biarkan daftar slot apa adanya.
+        }
+      }
+
+      return;
+    }
+
     // Save payment record
     const payments = JSON.parse(localStorage.getItem("hearme_payments") || "[]");
     payments.push({
@@ -202,16 +361,53 @@ export default function BookingPage() {
           <div className="bg-white rounded-3xl p-6 border border-purple-50 shadow-sm animate-scale-in">
             <h2 className="text-lg font-bold text-gray-900 mb-1">Pilih Waktu</h2>
             <p className="text-sm text-gray-500 mb-5">{dayLabel && `${dayLabel.day}, ${dayLabel.date} ${dayLabel.month}`}</p>
-            <div className="grid grid-cols-3 gap-2">
-              {timeSlots.map((t) => (
-                <button key={t} onClick={() => setSelectedTime(t)}
-                  className={`flex items-center justify-center gap-1.5 p-3 rounded-xl border-2 text-sm font-semibold transition-all ${
-                    selectedTime === t ? "border-[#6F3FB5] bg-[#F5EEFC] text-[#6F3FB5]" : "border-gray-100 hover:border-purple-200 text-gray-700"
-                  }`}>
-                  <Clock size={12} /> {t}
-                </button>
-              ))}
-            </div>
+
+            {/* Konflik jadwal dari backend (409) */}
+            {bookingError && (
+              <div className="mb-4 bg-amber-50 border border-amber-200 text-amber-700 text-sm rounded-2xl px-5 py-3">
+                {bookingError}
+              </div>
+            )}
+
+            {/* LOADING slot */}
+            {slotsLoading && (
+              <div className="grid grid-cols-3 gap-2">
+                {[0, 1, 2, 3, 4, 5].map((i) => (
+                  <div key={i} className="h-11 rounded-xl bg-purple-50 animate-pulse" />
+                ))}
+              </div>
+            )}
+
+            {/* ERROR slot */}
+            {!slotsLoading && slotsError && (
+              <div className="bg-red-50 border border-red-100 text-red-600 text-sm rounded-2xl px-5 py-4">
+                {slotsError}
+              </div>
+            )}
+
+            {/* EMPTY slot */}
+            {!slotsLoading && !slotsError && slots.length === 0 && (
+              <div className="text-center py-10 text-gray-400">
+                <div className="text-3xl mb-2">📅</div>
+                <p className="text-sm font-semibold">Tidak ada jadwal tersedia</p>
+                <p className="text-xs mt-1">Coba pilih tanggal lain</p>
+              </div>
+            )}
+
+            {/* SLOT dari backend */}
+            {!slotsLoading && !slotsError && slots.length > 0 && (
+              <div className="grid grid-cols-3 gap-2">
+                {slots.map((t) => (
+                  <button key={t} onClick={() => setSelectedTime(t)}
+                    className={`flex items-center justify-center gap-1.5 p-3 rounded-xl border-2 text-sm font-semibold transition-all ${
+                      selectedTime === t ? "border-[#6F3FB5] bg-[#F5EEFC] text-[#6F3FB5]" : "border-gray-100 hover:border-purple-200 text-gray-700"
+                    }`}>
+                    <Clock size={12} /> {t}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <button onClick={() => setStep("confirm")} disabled={!selectedTime}
               className="w-full mt-6 bg-[#6F3FB5] disabled:bg-purple-300 text-white font-semibold py-3 rounded-xl hover:bg-purple-800 transition-colors">
               Lanjut

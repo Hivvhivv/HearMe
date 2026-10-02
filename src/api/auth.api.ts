@@ -1,8 +1,16 @@
 import type { User, UserRole } from "../types";
 
-const API_URL = "http://localhost:5000/api/auth";
+import { api } from "./client";
 
-const SESSION_KEY = "hearme_session";
+import {
+  broadcastAuth,
+  clearAuth,
+  getStoredUser,
+  getToken,
+  hasToken,
+  saveAuth,
+  saveUser,
+} from "../lib/authStorage";
 
 type BackendUser = {
   id: string;
@@ -37,35 +45,6 @@ function convertUser(user: BackendUser): User {
   } as User;
 }
 
-function saveSession(user: User, token: string) {
-  const session = {
-    user,
-    token,
-    expiresAt: Date.now() + 86400000,
-  };
-
-  localStorage.setItem(
-    SESSION_KEY,
-    JSON.stringify(session)
-  );
-
-  localStorage.setItem(
-    "hearme_auth",
-    "true"
-  );
-
-  localStorage.setItem(
-    "hearme_user",
-    JSON.stringify(user)
-  );
-
-  // Disimpan juga agar API lain bisa mengambil token
-  localStorage.setItem(
-    "token",
-    token
-  );
-}
-
 export const authAPI = {
 
   // ====================================================
@@ -80,41 +59,23 @@ export const authAPI = {
     token: string;
   } | null> => {
 
-    const response = await fetch(
-      `${API_URL}/login`,
-      {
-        method: "POST",
-
-        headers: {
-          "Content-Type": "application/json",
-        },
-
-        body: JSON.stringify({
-          email,
-          password,
-        }),
-      }
+    // skipAuth: 401 di sini berarti password salah,
+    // bukan session berakhir -- jadi jangan memicu refresh.
+    const result = await api.post<LoginResponse>(
+      "/auth/login",
+      { email, password },
+      { skipAuth: true }
     );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(
-        data?.message ||
-        "Login failed"
-      );
-    }
-
-    const result =
-      data as LoginResponse;
 
     const user =
       convertUser(result.user);
 
-    saveSession(
-      user,
-      result.token
+    saveAuth(
+      result.token,
+      user as unknown as Record<string, unknown>
     );
+
+    broadcastAuth("login");
 
     return {
       user,
@@ -138,38 +99,23 @@ export const authAPI = {
     role: "user" | "psychologist";
   }): Promise<User> => {
 
-    const response = await fetch(
-      `${API_URL}/register`,
+    const result = await api.post<{
+      user: BackendUser;
+    }>(
+      "/auth/register",
       {
-        method: "POST",
-
-        headers: {
-          "Content-Type": "application/json",
-        },
-
-        body: JSON.stringify({
-          name: data.username,
-          username: data.username,
-          gender: data.gender,
-          birthDate: data.birthDate,
-          email: data.email,
-          password: data.password,
-          confirmPassword: data.confirmPassword,
-          phoneNumber: data.phoneNumber,
-          role: data.role,
-        }),
-      }
+        name: data.username,
+        username: data.username,
+        gender: data.gender,
+        birthDate: data.birthDate,
+        email: data.email,
+        password: data.password,
+        confirmPassword: data.confirmPassword,
+        phoneNumber: data.phoneNumber,
+        role: data.role,
+      },
+      { skipAuth: true }
     );
-
-    const result =
-      await response.json();
-
-    if (!response.ok) {
-      throw new Error(
-        result?.message ||
-        "Registration failed"
-      );
-    }
 
     const user =
       convertUser(result.user);
@@ -181,29 +127,38 @@ export const authAPI = {
   // ====================================================
   // LOGOUT
   // ====================================================
+  //
+  // Menghapus SEMUA key auth lewat helper bersama.
+  // Sebelumnya fungsi ini melewatkan "hearme_token",
+  // yaitu justru key yang dibaca route guard.
+  //
+  // ====================================================
 
   logout: async (): Promise<void> => {
-
-    localStorage.removeItem(
-      SESSION_KEY
-    );
-
-    localStorage.removeItem(
-      "hearme_auth"
-    );
-
-    localStorage.removeItem(
-      "hearme_user"
-    );
-
-    localStorage.removeItem(
-      "token"
-    );
+    try {
+      // Revoke session device ini di SERVER.
+      await api.post("/auth/logout");
+    } catch {
+      // Offline: state lokal tetap dibersihkan.
+    } finally {
+      clearAuth();
+      broadcastAuth("logout");
+    }
   },
 
 
   // ====================================================
   // GET SESSION
+  // ====================================================
+  //
+  // CATATAN: tidak ada lagi pengecekan expiry memakai
+  // jam device. Jam device bisa berbeda dari server
+  // (clock skew), sehingga token yang masih valid bisa
+  // dianggap kedaluwarsa.
+  //
+  // Yang menentukan token masih berlaku atau tidak
+  // adalah backend, lewat response 401.
+  //
   // ====================================================
 
   getSession: (): {
@@ -211,60 +166,17 @@ export const authAPI = {
     token: string;
   } | null => {
 
-    const raw =
-      localStorage.getItem(
-        SESSION_KEY
-      );
+    const token = getToken();
+    const user = getStoredUser<User>();
 
-    if (!raw) {
+    if (!token || !user) {
       return null;
     }
 
-    try {
-
-      const session =
-        JSON.parse(raw);
-
-      if (
-        !session.token ||
-        !session.user
-      ) {
-        return null;
-      }
-
-      if (
-        session.expiresAt &&
-        session.expiresAt < Date.now()
-      ) {
-
-        localStorage.removeItem(
-          SESSION_KEY
-        );
-
-        localStorage.removeItem(
-          "hearme_auth"
-        );
-
-        localStorage.removeItem(
-          "hearme_user"
-        );
-
-        localStorage.removeItem(
-          "token"
-        );
-
-        return null;
-      }
-
-      return {
-        user: session.user,
-        token: session.token,
-      };
-
-    } catch {
-
-      return null;
-    }
+    return {
+      user,
+      token,
+    };
   },
 
 
@@ -273,7 +185,7 @@ export const authAPI = {
   // ====================================================
 
   isAuthenticated: (): boolean => {
-    return !!authAPI.getSession();
+    return hasToken();
   },
 
 
@@ -282,11 +194,7 @@ export const authAPI = {
   // ====================================================
 
   getCurrentUser: (): User | null => {
-
-    const session =
-      authAPI.getSession();
-
-    return session?.user || null;
+    return getStoredUser<User>();
   },
 
 
@@ -309,43 +217,19 @@ export const authAPI = {
 
   refreshCurrentUser: async (): Promise<User> => {
 
-    const session =
-      authAPI.getSession();
-
-    if (!session?.token) {
-      throw new Error(
-        "Authentication required"
-      );
-    }
-
-    const response = await fetch(
-      `${API_URL}/me`,
-      {
-        method: "GET",
-
-        headers: {
-          Authorization:
-            `Bearer ${session.token}`,
-        },
-      }
+    // Tidak perlu memeriksa token lebih dulu: kalau access
+    // token kedaluwarsa, api client akan me-refresh dan
+    // mengulang request ini. Kalau refresh juga gagal,
+    // client membersihkan state auth lalu melempar 401.
+    const result = await api.get<{ user: BackendUser }>(
+      "/auth/me"
     );
-
-    const result =
-      await response.json();
-
-    if (!response.ok) {
-      throw new Error(
-        result?.message ||
-        "Failed to get current user"
-      );
-    }
 
     const user =
       convertUser(result.user);
 
-    saveSession(
-      user,
-      session.token
+    saveUser(
+      user as unknown as Record<string, unknown>
     );
 
     return user;
@@ -385,15 +269,9 @@ export const authAPI = {
       ...data,
     };
 
-    const session =
-      authAPI.getSession();
-
-    if (session) {
-      saveSession(
-        updated,
-        session.token
-      );
-    }
+    saveUser(
+      updated as unknown as Record<string, unknown>
+    );
 
     return updated;
   },

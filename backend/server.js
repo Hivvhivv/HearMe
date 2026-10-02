@@ -2,9 +2,11 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 
-import { getDb, setupIndexes } from "./db.js";
+import { pingDb, setupIndexes } from "./db.js";
 
 import authRoutes from "./auth.routes.js";
+import userRoutes from "./users.routes.js";
+import psychologistRoutes from "./psychologists.routes.js";
 import adminRoutes from "./admin.routes.js";
 import verificationRoutes from "./verification.routes.js";
 import consultationRoutes from "./consultation.routes.js";
@@ -18,8 +20,30 @@ const app = express();
 // ======================================================
 // CORS
 // ======================================================
+//
+// CORS_ORIGINS di .env, dipisah koma. Contoh:
+//
+//   CORS_ORIGINS=http://localhost:8443,http://192.168.1.5:8443
+//
+// Kalau tidak diisi, semua origin diizinkan (mode dev).
+// Jangan dibiarkan kosong saat production.
+//
+// ======================================================
 
-app.use(cors());
+const allowedOrigins = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin:
+      allowedOrigins.length > 0
+        ? allowedOrigins
+        : true,
+    credentials: true
+  })
+);
 
 
 // ======================================================
@@ -36,34 +60,36 @@ app.use(
 // ======================================================
 // HEALTH CHECK
 // ======================================================
+//
+// Membalas 503 (bukan 500) ketika database tidak bisa
+// dihubungi, supaya jelas bedanya antara "backend mati"
+// (fetch gagal total) dan "backend hidup, database
+// bermasalah" (dapat JSON 503).
+//
+// ======================================================
 
 app.get(
   "/api/health",
   async (_req, res) => {
-    try {
-      const db = await getDb();
+    const result = await pingDb();
 
-      await db.command({
-        ping: 1
-      });
-
-      res.json({
-        ok: true,
-        database: "hearme"
-      });
-
-    } catch (error) {
+    if (!result.ok) {
       console.error(
-        "Health check error:",
-        error
+        "Health check failed:",
+        result.message
       );
 
-      res.status(500).json({
+      return res.status(503).json({
         ok: false,
-        message:
-          "Database connection failed"
+        database: "hearme",
+        message: result.message
       });
     }
+
+    return res.json({
+      ok: true,
+      database: "hearme"
+    });
   }
 );
 
@@ -75,6 +101,16 @@ app.get(
 app.use(
   "/api/auth",
   authRoutes
+);
+
+app.use(
+  "/api/users",
+  userRoutes
+);
+
+app.use(
+  "/api/psychologists",
+  psychologistRoutes
 );
 
 app.use(
@@ -92,6 +128,7 @@ app.use(
   consultationRoutes
 );
 
+
 // ======================================================
 // DAILY MOOD
 // ======================================================
@@ -103,28 +140,62 @@ app.use(
 
 
 // ======================================================
-// SERVER
+// VERCEL EXPORT
 // ======================================================
 
-const PORT =
-  process.env.PORT || 5000;
+export default app;
 
-setupIndexes()
-  .then(() => {
-    app.listen(
-      PORT,
-      () => {
-        console.log(
-          `HearMe backend running on port ${PORT}`
-        );
-      }
-    );
-  })
-  .catch((error) => {
-    console.error(
-      "Failed to initialize MongoDB:",
-      error
-    );
 
-    process.exit(1);
-  });
+// ======================================================
+// LOCAL SERVER
+// ======================================================
+//
+// Bagian ini hanya dijalankan ketika backend
+// dijalankan secara lokal.
+//
+// Saat di-deploy ke Vercel, Vercel akan menggunakan
+// export default app di atas.
+//
+// ======================================================
+
+if (process.env.NODE_ENV !== "production") {
+
+  const PORT =
+    process.env.PORT || 5000;
+
+
+  // ====================================================
+  // Server HARUS tetap listen walaupun setup index
+  // gagal (misalnya Atlas sedang lambat, IP belum
+  // masuk allowlist, atau internet mati sebentar).
+  //
+  // Sebelumnya proses di-exit, sehingga gangguan
+  // sesaat pada database membuat backend mati total
+  // dan frontend hanya melihat "Failed to fetch".
+  //
+  // Sekarang: backend hidup, /api/health membalas 503
+  // dengan alasan yang jelas.
+  // ====================================================
+
+  app.listen(
+    PORT,
+    "0.0.0.0",
+    () => {
+
+      console.log(
+        `HearMe backend running on port ${PORT}`
+      );
+
+      setupIndexes()
+        .catch((error) => {
+
+          console.error(
+            "MongoDB index setup failed (server tetap jalan):",
+            error?.message || error
+          );
+
+        });
+
+    }
+  );
+}

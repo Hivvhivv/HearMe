@@ -10,16 +10,32 @@ import {
 } from "../data/mockData";
 
 import { consultationAPI } from "../api/consultation.api";
+import { api, refreshAccessToken } from "../api/client";
+
+import {
+  broadcastAuth,
+  clearAuth,
+  getStoredRole,
+  getStoredUser,
+  getToken,
+  hasToken,
+  saveAuth,
+  saveUser,
+} from "../lib/authStorage";
 
 
 // ======================================================
 // TYPES
 // ======================================================
 
+// super_admin dipakai backend (authorize("admin","super_admin"))
+// tapi sebelumnya tidak ada di tipe frontend, sehingga guard
+// admin tidak bisa mengenalinya.
 export type AppRole =
   | "user"
   | "psychologist"
-  | "admin";
+  | "admin"
+  | "super_admin";
 
 
 // ======================================================
@@ -40,34 +56,20 @@ export const authService = {
 
     try {
 
-      const response = await fetch(
-        "http://localhost:5000/api/auth/login",
-        {
-          method: "POST",
-
-          headers: {
-            "Content-Type": "application/json",
-          },
-
-          body: JSON.stringify({
-            email,
-            password,
-          }),
-        }
+      // skipAuth: belum ada token, dan 401 di sini berarti
+      // "password salah" -- bukan "session berakhir".
+      // Tanpa ini, login gagal akan memicu refresh.
+      const data = await api.post<{
+        token: string;
+        user: Record<string, unknown> & {
+          email: string;
+          role: AppRole;
+        };
+      }>(
+        "/auth/login",
+        { email, password },
+        { skipAuth: true }
       );
-
-
-      const data = await response.json();
-
-
-      if (!response.ok) {
-
-        throw new Error(
-          data.message ||
-          "Email atau password salah"
-        );
-
-      }
 
 
       const user = data.user;
@@ -75,27 +77,19 @@ export const authService = {
 
       // ------------------------------------------------
       // SAVE AUTH DATA
+      //
+      // Access token masuk MEMORI, bukan localStorage.
+      // Refresh token sudah dipasang backend sebagai
+      // cookie httpOnly.
       // ------------------------------------------------
 
-      localStorage.setItem(
-        "hearme_auth",
-        "true"
+      saveAuth(
+        data.token,
+        user
       );
 
-      localStorage.setItem(
-        "hearme_role",
-        user.role
-      );
-
-      localStorage.setItem(
-        "hearme_user",
-        JSON.stringify(user)
-      );
-
-      localStorage.setItem(
-        "hearme_token",
-        data.token
-      );
+      // Beri tahu tab lain supaya ikut masuk.
+      broadcastAuth("login");
 
 
       return {
@@ -135,23 +129,135 @@ export const authService = {
   // LOGOUT
   // ----------------------------------------------------
 
-  logout: () => {
+  logout: async () => {
 
-    localStorage.removeItem(
-      "hearme_auth"
-    );
+    // Revoke session device INI di server.
+    // Device lain milik user yang sama tetap login.
+    try {
 
-    localStorage.removeItem(
-      "hearme_role"
-    );
+      await api.post("/auth/logout");
 
-    localStorage.removeItem(
-      "hearme_user"
-    );
+    } catch {
 
-    localStorage.removeItem(
-      "hearme_token"
-    );
+      // Offline atau backend mati: state lokal TETAP
+      // dibersihkan. Logout tidak boleh gagal hanya
+      // karena jaringan bermasalah.
+
+    } finally {
+
+      clearAuth();
+
+      broadcastAuth("logout");
+
+    }
+
+  },
+
+
+  // ----------------------------------------------------
+  // LOGOUT DARI SEMUA DEVICE
+  // ----------------------------------------------------
+
+  logoutAll: async () => {
+
+    try {
+
+      await api.post("/auth/logout-all");
+
+    } catch {
+
+      // Sama seperti logout biasa.
+
+    } finally {
+
+      clearAuth();
+
+      broadcastAuth("logout");
+
+    }
+
+  },
+
+
+  // ----------------------------------------------------
+  // DAFTAR DEVICE AKTIF
+  // ----------------------------------------------------
+
+  getSessions: async () => {
+
+    const data = await api.get<{
+      sessions: {
+        id: string;
+        userAgent: string;
+        ip: string;
+        createdAt: string;
+        lastUsedAt: string;
+        expiresAt: string;
+        current: boolean;
+      }[];
+    }>("/auth/sessions");
+
+    return data.sessions;
+
+  },
+
+
+  // ----------------------------------------------------
+  // AKHIRI SATU DEVICE
+  // ----------------------------------------------------
+
+  revokeSession: async (sessionId: string) => {
+
+    await api.delete(`/auth/sessions/${sessionId}`);
+
+  },
+
+
+  // ----------------------------------------------------
+  // BOOTSTRAP SAAT APP DIBUKA / DI-REFRESH
+  // ----------------------------------------------------
+  //
+  // Access token hanya ada di memori, jadi setelah
+  // refresh halaman token itu hilang. Satu-satunya cara
+  // masuk kembali adalah cookie refresh token -- dan
+  // cookie itu sudah di-revoke server kalau user logout.
+  //
+  // Inilah yang membuat "logout lalu refresh" benar-benar
+  // mengharuskan login ulang.
+  //
+  // ----------------------------------------------------
+
+  bootstrap: async () => {
+
+    const token = await refreshAccessToken();
+
+    if (!token) {
+
+      clearAuth();
+
+      return null;
+
+    }
+
+
+    // Ambil data user terbaru dari server.
+    try {
+
+      const data = await api.get<{
+        user: Record<string, unknown> & { role?: string };
+      }>("/auth/me");
+
+      saveUser(data.user);
+
+      return data.user;
+
+    } catch {
+
+      // Token baru didapat tapi /me gagal: pakai cache
+      // profil supaya UI tetap jalan.
+      return getStoredUser();
+
+    }
 
   },
 
@@ -162,9 +268,7 @@ export const authService = {
 
   isAuthenticated: () => {
 
-    return !!localStorage.getItem(
-      "hearme_token"
-    );
+    return hasToken();
 
   },
 
@@ -176,13 +280,8 @@ export const authService = {
   getRole: (): AppRole => {
 
     return (
-
-      (localStorage.getItem(
-        "hearme_role"
-      ) as AppRole) ||
-
+      (getStoredRole() as AppRole) ||
       "user"
-
     );
 
   },
@@ -209,26 +308,7 @@ export const authService = {
 
   getUser: () => {
 
-    const saved =
-      localStorage.getItem(
-        "hearme_user"
-      );
-
-
-    if (!saved) {
-      return null;
-    }
-
-
-    try {
-
-      return JSON.parse(saved);
-
-    } catch {
-
-      return null;
-
-    }
+    return getStoredUser();
 
   },
 
@@ -239,9 +319,7 @@ export const authService = {
 
   getToken: () => {
 
-    return localStorage.getItem(
-      "hearme_token"
-    );
+    return getToken();
 
   },
 
@@ -267,13 +345,7 @@ export const authService = {
     };
 
 
-    localStorage.setItem(
-
-      "hearme_user",
-
-      JSON.stringify(updated)
-
-    );
+    saveUser(updated);
 
   },
 
@@ -574,60 +646,22 @@ export const consultationService = {
 
 
 // ======================================================
-// MOOD SERVICE
+// MOOD SERVICE -- DIHAPUS
 // ======================================================
 //
-// NOTE:
-// Daily Mood yang baru menggunakan:
-// src/api/dailyMood.api.ts
+// moodService dulu menyimpan mood di localStorage
+// ("hearme_mood_logs"). Itu bertentangan dengan aturan
+// bahwa Daily Mood adalah data persistent dan harus
+// berasal dari MongoDB.
 //
-// Service lama ini dipertahankan agar halaman lama
-// yang masih menggunakan moodService tidak error.
+// Sumber tunggalnya sekarang:
+//
+//   src/api/dailyMood.api.ts  ->  /api/daily-moods
+//
+// Tidak ada halaman yang masih memakainya, jadi service
+// ini dihapus seluruhnya daripada dibiarkan sebagai
+// jalur penyimpanan kedua yang bisa dipakai tanpa sadar.
 // ======================================================
-
-export const moodService = {
-
-  getLogs: (): Record<
-    string,
-    string
-  > => {
-
-    const saved =
-      localStorage.getItem(
-        "hearme_mood_logs"
-      );
-
-
-    return saved
-      ? JSON.parse(saved)
-      : {};
-
-  },
-
-
-  saveMood: (
-    dateKey: string,
-    mood: string
-  ) => {
-
-    const logs =
-      moodService.getLogs();
-
-
-    logs[dateKey] = mood;
-
-
-    localStorage.setItem(
-
-      "hearme_mood_logs",
-
-      JSON.stringify(logs)
-
-    );
-
-  },
-
-};
 
 
 // ======================================================

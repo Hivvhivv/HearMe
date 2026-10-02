@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Bell, ChevronDown, User, Settings, LogOut, Menu, X, Phone } from "lucide-react";
 import Logo from "./Logo";
+import { useAuth } from "../contexts/AuthContext";
 
 const navLinks = [
   { label: "Home", to: "/dashboard" },
@@ -18,12 +19,20 @@ export default function DashboardNavbar() {
   const loc = useLocation();
   const navigate = useNavigate();
 
-  const user = JSON.parse(localStorage.getItem("hearme_user") || '{"name":"Inof"}');
-  const name = user?.name || "Inof";
+  const { user, logout: doLogout } = useAuth();
+  const name = (user?.name as string) || "Inof";
 
-  const logout = () => {
-    localStorage.removeItem("hearme_auth");
-    navigate("/");
+  const logout = async () => {
+    // logout() me-revoke session device INI di server,
+    // menghapus cookie refresh token, membersihkan state
+    // lokal, dan memberi sinyal ke tab lain.
+    //
+    // Device lain milik user yang sama TETAP login.
+    await doLogout();
+
+    // replace: true supaya tombol Back tidak bisa
+    // kembali ke halaman protected.
+    navigate("/sign-in", { replace: true });
   };
 
   return (

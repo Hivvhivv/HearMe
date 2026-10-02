@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { authService } from "./services";
+import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import SplashScreen from "./pages/SplashScreen";
 import LandingPage from "./pages/LandingPage";
 import AboutPage from "./pages/AboutPage";
@@ -48,9 +48,33 @@ import AdminForumModerationPage from "./pages/admin/AdminForumModerationPage";
 // ADMIN → /admin/dashboard
 // ======================================================
 
+// ======================================================
+// LOADING SAAT SESSION DIPERIKSA
+// ======================================================
+//
+// Selama pengecekan session ke backend, JANGAN render
+// halaman protected. Tanpa ini, halaman protected sempat
+// tampil sekejap sebelum redirect -- dan data user lama
+// bisa terlihat.
+//
+// ======================================================
+
+function AuthLoading() {
+  return (
+    <div className="min-h-screen bg-[#FAF8FD] flex items-center justify-center">
+      <div className="flex flex-col items-center gap-4">
+        <div className="w-10 h-10 border-4 border-purple-100 border-t-[#6F3FB5] rounded-full animate-spin" />
+        <p className="text-sm text-gray-500">Memeriksa sesi...</p>
+      </div>
+    </div>
+  );
+}
+
 function UserRoute({ children }: { children: React.ReactNode }) {
-  if (!authService.isAuthenticated()) return <Navigate to="/sign-in" replace />;
-  const role = authService.getRole();
+  const { loading, isAuthenticated, role } = useAuth();
+
+  if (loading) return <AuthLoading />;
+  if (!isAuthenticated) return <Navigate to="/sign-in" replace />;
   if (role === "psychologist") return <Navigate to="/psychologist/dashboard" replace />;
   if (role === "admin") return <Navigate to="/admin/dashboard" replace />;
   return <>{children}</>;
@@ -67,18 +91,65 @@ function getPsychVerificationStatus(): string {
 }
 
 function PsychologistRoute({ children, requiresVerification = false }: { children: React.ReactNode; requiresVerification?: boolean }) {
-  if (!authService.isAuthenticated()) return <Navigate to="/sign-in" replace />;
-  const role = authService.getRole();
+  const { loading, isAuthenticated, role, user } = useAuth();
+
+  if (loading) return <AuthLoading />;
+  if (!isAuthenticated) return <Navigate to="/sign-in" replace />;
   if (role === "user") return <Navigate to="/dashboard" replace />;
   if (role === "admin") return <Navigate to="/admin/dashboard" replace />;
-  if (requiresVerification && getPsychVerificationStatus() !== "approved") {
-    return <Navigate to="/psychologist/dashboard?blocked=1" replace />;
+
+  if (requiresVerification) {
+    // Status verifikasi diambil dari SERVER (lewat context),
+    // dengan localStorage hanya sebagai cadangan. Sebelumnya
+    // keputusan ini sepenuhnya berdasarkan localStorage yang
+    // bisa dimanipulasi dari browser.
+    const status =
+      (user?.verificationStatus as string) ||
+      getPsychVerificationStatus();
+
+    if (status !== "approved") {
+      return <Navigate to="/psychologist/dashboard?blocked=1" replace />;
+    }
   }
+
   return <>{children}</>;
 }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  return authService.isAuthenticated() ? <>{children}</> : <Navigate to="/sign-in" replace />;
+  const { loading, isAuthenticated } = useAuth();
+
+  if (loading) return <AuthLoading />;
+  return isAuthenticated ? <>{children}</> : <Navigate to="/sign-in" replace />;
+}
+
+// ======================================================
+// ADMIN ROUTE
+// ======================================================
+//
+// Sebelumnya SEMUA route /admin/* tanpa guard sama sekali,
+// dan "login" admin hanya mencocokkan string hardcode di
+// JavaScript frontend. Siapa pun bisa membuka halaman
+// admin dengan mengisi localStorage sendiri.
+//
+// Sekarang role diambil dari AuthContext, yang mengambilnya
+// dari DATABASE lewat /api/users/me -- bukan dari input
+// frontend. Endpoint admin di backend tetap punya
+// authorize("admin","super_admin") sendiri, jadi guard ini
+// hanya lapisan UI, bukan satu-satunya pengaman.
+//
+// ======================================================
+
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const { loading, isAuthenticated, role } = useAuth();
+
+  if (loading) return <AuthLoading />;
+  if (!isAuthenticated) return <Navigate to="/admin/login" replace />;
+
+  if (role !== "admin" && role !== "super_admin") {
+    return <Navigate to="/" replace />;
+  }
+
+  return <>{children}</>;
 }
 
 function PrivacyPage() {
@@ -109,8 +180,9 @@ function TermsPage() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
         {/* Public */}
         <Route path="/splash" element={<SplashScreen />} />
         <Route path="/" element={<LandingPage />} />
@@ -154,18 +226,19 @@ export default function App() {
         <Route path="/psychologist/schedule" element={<PsychologistRoute requiresVerification><PsychologistSchedulePage /></PsychologistRoute>} />
         <Route path="/psychologist/consultation/:id" element={<PsychologistRoute requiresVerification><PsychologistChatPage /></PsychologistRoute>} />
         <Route path="/psychologist/consultation-mgmt/:id" element={<PsychologistRoute><PsychologistConsultationRoomPage /></PsychologistRoute>} />
-        <Route path="/psychologist/profile"element={<PsychologistProfilePage />}/>
+        <Route path="/psychologist/profile" element={<PsychologistRoute><PsychologistProfilePage /></PsychologistRoute>} />
 
-        {/* Admin — own session guard */}
-        <Route path="/admin/login" element={<AdminLoginPage />} />
-        <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
-        <Route path="/admin/forum" element={<AdminForumPage />} />
-        <Route path="/admin/verification" element={<AdminVerificationPage />} />
-        <Route path="/admin/mind-hub" element={<AdminMindHubPage />} />
-        <Route path="/admin/forum-moderation" element={<AdminForumModerationPage />} />
+          {/* Admin — role admin/super_admin dari database */}
+          <Route path="/admin/login" element={<AdminLoginPage />} />
+          <Route path="/admin/dashboard" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />
+          <Route path="/admin/forum" element={<AdminRoute><AdminForumPage /></AdminRoute>} />
+          <Route path="/admin/verification" element={<AdminRoute><AdminVerificationPage /></AdminRoute>} />
+          <Route path="/admin/mind-hub" element={<AdminRoute><AdminMindHubPage /></AdminRoute>} />
+          <Route path="/admin/forum-moderation" element={<AdminRoute><AdminForumModerationPage /></AdminRoute>} />
 
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
   );
 }

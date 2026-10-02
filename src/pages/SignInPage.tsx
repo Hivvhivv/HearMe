@@ -3,7 +3,7 @@ import { Link, useNavigate, Navigate } from "react-router-dom";
 import { Eye, EyeOff, Mail, Lock } from "lucide-react";
 import PublicNavbar from "../components/PublicNavbar";
 import Logo from "../components/Logo";
-import { authService } from "../services";
+import { useAuth } from "../contexts/AuthContext";
 
 export default function SignInPage() {
   const [email, setEmail] = useState("");
@@ -14,15 +14,44 @@ export default function SignInPage() {
 
   const navigate = useNavigate();
 
+  const {
+    login,
+    loading: authLoading,
+    isAuthenticated,
+    role,
+    user,
+  } = useAuth();
+
   // ======================================================
   // REDIRECT JIKA SUDAH LOGIN
   // ======================================================
+  //
+  // Tunggu pengecekan session selesai dulu. Kalau tidak,
+  // form login sempat tampil walaupun user sebenarnya
+  // masih punya session yang sah.
+  //
+  // ======================================================
 
-  if (authService.isAuthenticated()) {
-    const role = authService.getRole();
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#FAF8FD] flex items-center justify-center">
+        <div className="w-10 h-10 border-4 border-purple-100 border-t-[#6F3FB5] rounded-full animate-spin" />
+      </div>
+    );
+  }
 
+  if (isAuthenticated) {
     if (role === "psychologist") {
-      return <Navigate to="/psychologist/dashboard" replace />;
+      return (
+        <Navigate
+          to={
+            user?.verificationStatus === "approved"
+              ? "/psychologist/dashboard"
+              : "/psychologist/verification"
+          }
+          replace
+        />
+      );
     }
 
     if (role === "admin") {
@@ -51,22 +80,27 @@ export default function SignInPage() {
     setLoading(true);
 
     try {
-      const result = await authService.login(
+      // login() dari context: menyimpan token di memori,
+      // menerima cookie refresh token, dan memperbarui
+      // state auth global sekaligus.
+      const loggedIn = await login(
         email.trim(),
         password
       );
 
-      // Login berhasil
-      if (result.role === "psychologist") {
+      // replace: true supaya tombol Back tidak kembali
+      // ke halaman login.
+      if (loggedIn.role === "psychologist") {
         navigate(
-          result.user.verificationStatus === "approved"
+          loggedIn.verificationStatus === "approved"
             ? "/psychologist/dashboard"
-            : "/psychologist/verification"
+            : "/psychologist/verification",
+          { replace: true }
         );
-      } else if (result.role === "admin") {
-        navigate("/admin/dashboard");
+      } else if (loggedIn.role === "admin") {
+        navigate("/admin/dashboard", { replace: true });
       } else {
-        navigate("/dashboard");
+        navigate("/dashboard", { replace: true });
       }
 
     } catch (error) {

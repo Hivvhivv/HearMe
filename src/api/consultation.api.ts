@@ -1,24 +1,12 @@
 import type { Consultation, ConsultationMessage } from "../types";
 
-const API_URL = "http://localhost:5000/api/consultations";
+import { apiFetch } from "./client";
 
-function getToken() {
-  return localStorage.getItem("hearme_token") || localStorage.getItem("token") || localStorage.getItem("authToken") || localStorage.getItem("accessToken");
-}
-
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken();
-  const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers,
-    },
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.message || `Request failed with status ${response.status}`);
-  return data;
+// Semua request lewat apiFetch: token otomatis, cookie
+// refresh ikut terkirim, dan 401 memicu single-flight
+// refresh lalu request diulang.
+function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return apiFetch<T>(`/consultations${path}`, options);
 }
 
 function toConsultation(item: Record<string, unknown>): Consultation {

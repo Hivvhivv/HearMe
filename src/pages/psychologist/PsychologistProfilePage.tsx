@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { Camera, Edit2, Key, LogOut } from "lucide-react";
 import PsychologistNavbar from "../../components/PsychologistNavbar";
 import Footer from "../../components/Footer";
+import { useAuth } from "../../contexts/AuthContext";
+import { userAPI } from "../../api/user.api";
 
 interface PsychologistProfile {
   id?: string;
@@ -16,14 +18,10 @@ interface PsychologistProfile {
   bio?: string;
 }
 
-const API_URL = "http://localhost:5000/api";
-
-function getToken() {
-  return localStorage.getItem("hearme_token");
-}
-
 export default function PsychologistProfilePage() {
   const navigate = useNavigate();
+
+  const { logout: doLogout } = useAuth();
 
   const [user, setUser] =
     useState<PsychologistProfile | null>(null);
@@ -45,30 +43,22 @@ useEffect(() => {
       setLoading(true);
       setError("");
 
-      const token = getToken();
+      // GET /api/users/me mengembalikan data akun
+      // sekaligus profil profesional psikolog
+      // (collection `psychologists`, direferensikan userId).
+      const me = await userAPI.getMe();
 
-      const response = await fetch(
-        "http://localhost:5000/api/auth/me",
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data?.message || "Gagal mengambil profil psikolog"
-        );
-      }
-
-      // Backend /api/auth/me mengembalikan:
-      // { user: {...} }
-      const profile = data.user;
+      const profile: PsychologistProfile = {
+        id: me.id,
+        name: me.name,
+        email: me.email,
+        contact: me.phoneNumber,
+        specialization: me.psychologistProfile?.specialization || "",
+        experience: me.psychologistProfile?.experience || "",
+        price: me.psychologistProfile?.price || "",
+        bio: me.psychologistProfile?.bio || "",
+        avatar: me.psychologistProfile?.avatar || "",
+      };
 
       setUser(profile);
       setForm(profile);
@@ -101,38 +91,40 @@ useEffect(() => {
       setSaving(true);
       setError("");
 
-      const token = getToken();
+      // Dua endpoint karena datanya ada di dua tempat:
+      //
+      //   akun (users)           -> nama, email, kontak
+      //   profil (psychologists) -> spesialisasi, harga, bio
+      //
+      // Sebelumnya halaman ini memanggil PATCH
+      // /api/psychologists/me yang TIDAK pernah ada di
+      // backend, jadi simpan profil selalu gagal 404.
 
-      const response = await fetch(
-        `${API_URL}/psychologists/me`,
-        {
-          method: "PATCH",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            name: form.name,
-            email: form.email,
-            contact: form.contact,
-            specialization: form.specialization,
-            experience: form.experience,
-            price: form.price,
-            bio: form.bio,
-          }),
-        }
-      );
+      const account = await userAPI.updateMe({
+        name: form.name,
+        email: form.email,
+        phoneNumber: form.contact,
+      });
 
-      const data = await response.json();
+      const professional =
+        await userAPI.updatePsychologistProfile({
+          specialization: form.specialization,
+          experience: form.experience,
+          price: form.price,
+          bio: form.bio,
+        });
 
-      if (!response.ok) {
-        throw new Error(
-          data?.message || "Gagal menyimpan profil"
-        );
-      }
-
-      const updatedProfile =
-        data.psychologist || data.user || data;
+      const updatedProfile: PsychologistProfile = {
+        id: account.id,
+        name: account.name,
+        email: account.email,
+        contact: account.phoneNumber,
+        specialization: professional.specialization || "",
+        experience: professional.experience || "",
+        price: professional.price || "",
+        bio: professional.bio || "",
+        avatar: professional.avatar || "",
+      };
 
       setUser(updatedProfile);
       setForm(updatedProfile);
@@ -154,13 +146,10 @@ useEffect(() => {
   // LOGOUT
   // ======================================================
 
-  const logout = () => {
-    localStorage.removeItem("hearme_auth");
-    localStorage.removeItem("hearme_role");
-    localStorage.removeItem("hearme_user");
-    localStorage.removeItem("hearme_token");
+  const logout = async () => {
+    await doLogout();
 
-    navigate("/");
+    navigate("/sign-in", { replace: true });
   };
 
   // ======================================================

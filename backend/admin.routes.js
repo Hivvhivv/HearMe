@@ -1,6 +1,4 @@
 import express from "express";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 import { ObjectId } from "mongodb";
 import { getDb } from "./db.js";
 import { authenticate, authorize } from "./auth.middleware.js";
@@ -9,211 +7,20 @@ const router = express.Router();
 
 /*
 |--------------------------------------------------------------------------
-| REGISTER
+| CATATAN: /register dan /login DIHAPUS dari file ini.
+|
+| Keduanya menduplikasi auth.routes.js dengan payload JWT
+| berbeda ({ userId, ... }) dan TANPA sid, sehingga token yang
+| diterbitkannya langsung ditolak auth middleware.
+|
+| Semua login -- termasuk admin -- sekarang melalui:
+|
+|   POST /api/auth/login
+|
+| yang membuat session per device dan cookie refresh token.
+| Otorisasi admin ditentukan oleh role di database.
 |--------------------------------------------------------------------------
 */
-
-router.post("/register", async (req, res) => {
-  try {
-    const {
-      name,
-      email,
-      password,
-      role = "user"
-    } = req.body;
-
-    // Validasi dasar
-    if (!name || !email || !password) {
-      return res.status(400).json({
-        message: "Name, email, and password are required"
-      });
-    }
-
-    if (password.length < 8) {
-      return res.status(400).json({
-        message: "Password must be at least 8 characters"
-      });
-    }
-
-    const db = await getDb();
-
-    const normalizedEmail = email.trim().toLowerCase();
-
-    // Cek email
-    const existingUser = await db.collection("users").findOne({
-      email: normalizedEmail
-    });
-
-    if (existingUser) {
-      return res.status(409).json({
-        message: "Email already registered"
-      });
-    }
-
-    /*
-    | User biasa hanya boleh register sebagai:
-    | - user
-    | - psychologist
-    |
-    | Admin/super_admin tidak boleh dibuat
-    | melalui endpoint register.
-    */
-
-    if (!["user", "psychologist"].includes(role)) {
-      return res.status(403).json({
-        message: "Invalid registration role"
-      });
-    }
-
-    // Hash password
-    const passwordHash = await bcrypt.hash(password, 12);
-
-    const now = new Date();
-
-    const newUser = {
-      name: name.trim(),
-      email: normalizedEmail,
-      passwordHash,
-
-      role,
-
-      verificationStatus:
-        role === "psychologist"
-          ? "pending"
-          : "not_required",
-
-      isActive: true,
-
-      createdAt: now,
-      updatedAt: now
-    };
-
-    const result = await db.collection("users").insertOne(newUser);
-
-    return res.status(201).json({
-      message: "Registration successful",
-      user: {
-        id: result.insertedId,
-        name: newUser.name,
-        email: newUser.email,
-        role: newUser.role,
-        verificationStatus: newUser.verificationStatus
-      }
-    });
-
-  } catch (error) {
-    console.error("Register error:", error);
-
-    return res.status(500).json({
-      message: "Registration failed"
-    });
-  }
-});
-
-
-/*
-|--------------------------------------------------------------------------
-| LOGIN
-|--------------------------------------------------------------------------
-*/
-
-router.post("/login", async (req, res) => {
-  try {
-    const {
-      email,
-      password
-    } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({
-        message: "Email and password are required"
-      });
-    }
-
-    const db = await getDb();
-
-    const normalizedEmail = email.trim().toLowerCase();
-
-    const user = await db.collection("users").findOne({
-      email: normalizedEmail
-    });
-
-    if (!user) {
-      return res.status(401).json({
-        message: "Invalid email or password"
-      });
-    }
-
-    // Cek account aktif
-    if (user.isActive === false) {
-      return res.status(403).json({
-        message: "Your account has been disabled"
-      });
-    }
-
-    // Cek password
-    const passwordValid = await bcrypt.compare(
-      password,
-      user.passwordHash
-    );
-
-    if (!passwordValid) {
-      return res.status(401).json({
-        message: "Invalid email or password"
-      });
-    }
-
-    /*
-    | Psikolog yang belum diverifikasi
-    | tidak boleh masuk ke area psikolog.
-    */
-
-    if (
-      user.role === "psychologist" &&
-      user.verificationStatus !== "approved"
-    ) {
-      return res.status(403).json({
-        message: "Psychologist account has not been approved yet",
-        verificationStatus: user.verificationStatus
-      });
-    }
-
-    // Buat JWT
-    const token = jwt.sign(
-      {
-        userId: user._id.toString(),
-        email: user.email,
-        role: user.role
-      },
-      process.env.JWT_SECRET,
-      {
-        expiresIn: process.env.JWT_EXPIRES_IN || "1d"
-      }
-    );
-
-    return res.json({
-      message: "Login successful",
-
-      token,
-
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        verificationStatus: user.verificationStatus
-      }
-    });
-
-  } catch (error) {
-    console.error("Login error:", error);
-
-    return res.status(500).json({
-      message: "Login failed"
-    });
-  }
-});
-
 
 /*
 |--------------------------------------------------------------------------
@@ -227,7 +34,10 @@ router.get("/me", authenticate, async (req, res) => {
 
     const user = await db.collection("users").findOne(
       {
-        _id: new ObjectId(req.user.userId)
+        // Payload JWT memakai "sub", bukan "userId".
+        // Sebelumnya ObjectId(undefined) membuat
+        // endpoint ini selalu balas 500.
+        _id: new ObjectId(req.user.sub)
       },
       {
         projection: {

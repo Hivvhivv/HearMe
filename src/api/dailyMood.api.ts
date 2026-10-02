@@ -2,11 +2,7 @@
 // DAILY MOOD API
 // ======================================================
 
-import { authService } from "../services";
-
-const API_BASE_URL =
-  import.meta.env.VITE_API_URL ||
-  "http://localhost:5000/api";
+import { apiFetch } from "./client";
 
 
 // ======================================================
@@ -46,99 +42,36 @@ async function request<T>(
   options: RequestInit = {}
 ): Promise<T> {
 
-  // Ambil token dari authService
-  const token = authService.getToken();
-
-  if (!token) {
-    throw new Error(
-      "Authentication required"
-    );
-  }
-
-
-  // Gabungkan header
-  const headers = new Headers(
-    options.headers
-  );
-
-  headers.set(
-    "Content-Type",
-    "application/json"
-  );
-
-  headers.set(
-    "Authorization",
-    `Bearer ${token}`
-  );
-
-
-  let response: Response;
+  // Semua request lewat apiFetch:
+  //
+  //   - token diambil dari memori, tidak localStorage
+  //   - cookie refresh token ikut terkirim
+  //   - 401 memicu single-flight refresh, lalu request
+  //     ini diulang otomatis
+  //
+  // Dulu fungsi ini melempar "Authentication required"
+  // kalau token belum ada. Itu tidak cocok lagi: access
+  // token hanya di memori dan baru terisi setelah
+  // bootstrap selesai, jadi pengecekan itu akan gagal
+  // tepat setelah halaman di-refresh.
 
   try {
 
-    response = await fetch(
-      `${API_BASE_URL}${endpoint}`,
-      {
-        ...options,
-        headers,
-      }
-    );
+    return await apiFetch<T>(endpoint, options);
 
   } catch (error) {
 
     console.error(
-      "Daily Mood API network error:",
-      error
-    );
-
-    throw new Error(
-      "Failed to connect to HearMe server"
-    );
-
-  }
-
-
-  // ====================================================
-  // READ RESPONSE
-  // ====================================================
-
-  let data: any = null;
-
-  try {
-
-    data = await response.json();
-
-  } catch {
-
-    data = null;
-
-  }
-
-
-  // ====================================================
-  // ERROR
-  // ====================================================
-
-  if (!response.ok) {
-
-    console.error(
       "Daily Mood API error:",
       {
-        status: response.status,
         endpoint,
-        response: data,
+        error,
       }
     );
 
-    throw new Error(
-      data?.message ||
-      `Request failed with status ${response.status}`
-    );
+    throw error;
 
   }
-
-
-  return data as T;
 }
 
 

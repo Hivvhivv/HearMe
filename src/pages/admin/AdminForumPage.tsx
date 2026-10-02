@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { useNavigate, useLocation, Link } from "react-router-dom"
+import { useAuth } from "../../contexts/AuthContext"
 import AdminSidebar from "../../components/AdminSidebar"
 import {
   LayoutDashboard,
@@ -51,6 +52,19 @@ function calcExpiry(duration: string): string {
 
 export default function AdminForumPage() {
   const navigate = useNavigate()
+
+// ======================================================
+// SESSION ADMIN
+// ======================================================
+//
+// Dulu halaman ini membaca localStorage
+// "hearme_admin_session" -- yang bisa diisi siapa pun
+// dari console browser untuk berpura-pura jadi admin.
+//
+// Sekarang identitas admin berasal dari AuthContext
+// (role di database), dan route dilindungi AdminRoute.
+// ======================================================
+  const { user: authUser, logout: doLogout } = useAuth()
   const [session, setSession] = useState<AdminSession | null>(null)
   const [bans, setBans] = useState<ForumBan[]>([])
   const [showModal, setShowModal] = useState(false)
@@ -63,14 +77,10 @@ export default function AdminForumPage() {
   const [formError, setFormError] = useState("")
 
   useEffect(() => {
-    const sessionRaw = localStorage.getItem("hearme_admin_session")
-
-    if (!sessionRaw) {
-      navigate("/admin/login")
-      return
-    }
-
-    setSession(JSON.parse(sessionRaw))
+    setSession({
+      role: String(authUser?.role || "admin"),
+      name: String(authUser?.name || "Admin HearMe"),
+    })
 
    const bansRaw = localStorage.getItem("hearme_forum_bans")
 
@@ -115,10 +125,10 @@ if (bansRaw) {
     saveBans(bans.filter((b) => b.id !== id))
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem("hearme_admin_session")
+  const handleLogout = async () => {
+    await doLogout()
 
-    navigate("/admin/login")
+    navigate("/admin/login", { replace: true })
   }
   if (!session) return null
 
