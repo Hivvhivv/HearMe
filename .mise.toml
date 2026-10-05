@@ -1,3 +1,9 @@
+# Versi toolchain, dipakai kalau kamu memakai mise.
+#
+# Project ini memakai npm (package-lock.json). Entri pnpm
+# sudah dihapus bersama pnpm-lock.yaml yang sudah basi --
+# dua lockfile berdampingan membuat package manager yang
+# dipakai saat deploy jadi tidak pasti.
+
 [tools]
 node = "22"
-"npm:pnpm" = "10.34.3"

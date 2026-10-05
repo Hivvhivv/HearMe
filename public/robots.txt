@@ -1,0 +1,13 @@
+# Selama tahap pengembangan, mesin pencari diminta menjauh.
+#
+# Saat siap dirilis ke publik, ganti seluruh isi file ini
+# menjadi:
+#
+#   User-agent: *
+#   Allow: /
+#
+# dan hapus juga <meta name="robots" content="noindex, nofollow" />
+# di index.html. Keduanya harus diubah bersamaan.
+
+User-agent: *
+Disallow: /
