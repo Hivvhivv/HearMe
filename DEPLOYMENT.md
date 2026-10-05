@@ -40,30 +40,38 @@ menunggu JSON, dan hasilnya `failed to fetch`.
 
 **Sudah diperbaiki**, lewat dua hal.
 
-Pertama, berkas `api/[...path].js` di root. Vercel otomatis
-memperlakukan isi folder `/api` sebagai serverless function, dan nama
-`[...path]` berarti catch-all: semua `/api/*` masuk ke sana, termasuk
-`/api/auth/login` dan `/api/forums/123/replies`. Isinya cuma meneruskan
-Express app:
+Pertama, berkas `api/index.js` di root. Vercel memperlakukan isi folder
+`/api` sebagai serverless function. Isinya cuma meneruskan Express app:
 
 ```js
 import app from "../backend/server.js";
 export default app;
 ```
 
-Karena konvensi itu sudah menangani `/api`, `vercel.json` tidak perlu
-rewrite untuk API — hanya untuk SPA:
+Kedua rewrite di `vercel.json` mengarahkan lalu lintasnya:
 
 ```json
 "rewrites": [
+  { "source": "/api/(.*)",     "destination": "/api" },
   { "source": "/((?!api/).*)", "destination": "/index.html" }
 ]
 ```
 
-Itu mengirim selain `/api/*` ke `index.html`, supaya refresh di halaman
-seperti `/forum` tidak 404 (kebutuhan SPA, terpisah dari masalah API,
-tapi akan menggigit kalau tidak ada). Berkas statis tetap aman karena
-Vercel memeriksa filesystem lebih dulu sebelum menerapkan rewrite.
+Baris pertama mengirim seluruh `/api/*` ke function itu. Express tetap
+menerima URL **aslinya** (`/api/auth/login`), bukan hasil rewrite-nya,
+dan route backend memang dipasang pada prefix `/api` — jadi pencocokan
+jalurnya sama persis dengan saat dijalankan lokal.
+
+Baris kedua mengirim selain `/api/*` ke `index.html`, supaya refresh di
+halaman seperti `/forum` tidak 404 (kebutuhan SPA, terpisah dari masalah
+API, tapi akan menggigit kalau tidak ada). Berkas statis tetap aman
+karena Vercel memeriksa filesystem lebih dulu sebelum menerapkan rewrite.
+
+> **Jangan memakai nama berkas catch-all** seperti `api/[...path].js`.
+> Pola `[...]` itu konvensi framework dan tidak terdokumentasi untuk
+> project biasa. Kalau tidak didukung, gejalanya menipu: build sukses,
+> function terlihat ada, tapi **setiap `/api/*` menjadi 404**. Pola
+> rewrite eksplisit di atas tidak punya ambiguitas itu.
 
 Kedua, `installCommand` yang juga memasang dependensi backend:
 

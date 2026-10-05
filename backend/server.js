@@ -174,12 +174,30 @@ export class Server {
       const result = await this.database.ping();
 
       if (!result.ok) {
+        /*
+         * Detailnya HANYA ke log server, tidak pernah ke
+         * klien.
+         *
+         * Pesan mentah dari driver MongoDB bisa memuat
+         * potongan connection string. Contoh nyata: URI
+         * dengan "@" yang tidak di-percent-encode membuat
+         * driver salah memotong, lalu errornya berbunyi
+         *
+         *   querySrv ENOTFOUND _mongodb._tcp.Nadi
+         *
+         * -- "Nadi" di situ adalah bagian dari PASSWORD.
+         * Endpoint ini publik, jadi meneruskan pesan itu
+         * sama dengan membocorkan kredensial.
+         */
         console.error("Health check failed:", result.message);
 
         return res.status(503).json({
           ok: false,
           database: "hearme",
-          message: result.message
+          code: "DATABASE_UNAVAILABLE",
+          message:
+            "Database tidak dapat dihubungi. " +
+            "Penyebabnya ada di log server."
         });
       }
 
