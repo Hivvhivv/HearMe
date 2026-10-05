@@ -1,8 +1,12 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { FileText, CheckCircle, XCircle, Clock, X, Eye, Download, Image as ImageIcon, History, ChevronDown, ChevronUp } from "lucide-react";
 import AdminSidebar from "../../components/AdminSidebar";
+import {
+  verificationAPI,
+  type VerificationSubmission as ApiSubmission,
+} from "../../api/verification.api";
 
 // ======================================================
 // ## DATABASE TEMPLATE IF CONNECTED ##
@@ -51,78 +55,76 @@ interface VerificationSubmission {
   reviewedBy?: string;
 }
 
-// Seed data for demo — uses placeholder documents
-const SEED_VERIFICATIONS: VerificationSubmission[] = [
-  {
-    id: "ver_seed_001",
-    psychologistId: "PSY-2024-001",
-    psychologistName: "Dr. Siti Rahayu, M.Psi",
-    email: "siti.rahayu@email.com",
-    submittedBy: "siti.rahayu@email.com",
-    submittedAt: "2026-08-12T08:00:00.000Z",
-    status: "pending",
-    submissionType: "initial",
-    submissionNumber: 1,
-    documents: [
-      { documentType: "ktp", fileName: "KTP_Siti.jpg", fileType: "image/jpeg", fileSize: 512000, fileUrl: "", uploadedAt: "2026-08-12T08:00:00.000Z" },
-      { documentType: "str", fileName: "STR_Siti.pdf", fileType: "application/pdf", fileSize: 1024000, fileUrl: "", uploadedAt: "2026-08-12T08:00:00.000Z" },
-      { documentType: "sip", fileName: "SIP_Siti.pdf", fileType: "application/pdf", fileSize: 800000, fileUrl: "", uploadedAt: "2026-08-12T08:00:00.000Z" },
-      { documentType: "sertifikat", fileName: "Sertifikat_Siti.pdf", fileType: "application/pdf", fileSize: 600000, fileUrl: "", uploadedAt: "2026-08-12T08:00:00.000Z" },
-    ],
-  },
-  {
-    id: "ver_seed_002",
-    psychologistId: "PSY-2024-002",
-    psychologistName: "Dr. Budi Santoso, M.Psi",
-    email: "budi.santoso@email.com",
-    submittedBy: "budi.santoso@email.com",
-    submittedAt: "2026-08-10T09:00:00.000Z",
-    status: "approved",
-    submissionType: "initial",
-    submissionNumber: 1,
-    documents: [
-      { documentType: "ktp", fileName: "KTP_Budi.jpg", fileType: "image/jpeg", fileSize: 400000, fileUrl: "", uploadedAt: "2026-08-10T09:00:00.000Z" },
-      { documentType: "str", fileName: "STR_Budi.pdf", fileType: "application/pdf", fileSize: 900000, fileUrl: "", uploadedAt: "2026-08-10T09:00:00.000Z" },
-      { documentType: "sip", fileName: "SIP_Budi.pdf", fileType: "application/pdf", fileSize: 750000, fileUrl: "", uploadedAt: "2026-08-10T09:00:00.000Z" },
-      { documentType: "sertifikat", fileName: "Sertifikat_Budi.pdf", fileType: "application/pdf", fileSize: 500000, fileUrl: "", uploadedAt: "2026-08-10T09:00:00.000Z" },
-    ],
-    reviewedAt: "2026-08-11T10:00:00.000Z",
-    reviewedBy: "Admin",
-  },
-  {
-    id: "ver_seed_003",
-    psychologistId: "PSY-2024-003",
-    psychologistName: "Dewi Kusuma, M.Psi",
-    email: "dewi.kusuma@email.com",
-    submittedBy: "dewi.kusuma@email.com",
-    submittedAt: "2026-08-08T11:00:00.000Z",
-    status: "rejected",
-    submissionType: "initial",
-    submissionNumber: 1,
-    documents: [
-      { documentType: "ktp", fileName: "KTP_Dewi.jpg", fileType: "image/jpeg", fileSize: 350000, fileUrl: "", uploadedAt: "2026-08-08T11:00:00.000Z" },
-      { documentType: "str", fileName: "STR_Dewi_invalid.pdf", fileType: "application/pdf", fileSize: 200000, fileUrl: "", uploadedAt: "2026-08-08T11:00:00.000Z" },
-      { documentType: "sip", fileName: "SIP_Dewi.pdf", fileType: "application/pdf", fileSize: 700000, fileUrl: "", uploadedAt: "2026-08-08T11:00:00.000Z" },
-      { documentType: "sertifikat", fileName: "Sertifikat_Dewi.pdf", fileType: "application/pdf", fileSize: 450000, fileUrl: "", uploadedAt: "2026-08-08T11:00:00.000Z" },
-    ],
-    rejectionReason: "Dokumen STR tidak dapat terbaca dengan jelas. Silakan upload ulang dokumen yang lebih jelas.",
-    reviewedAt: "2026-08-09T14:00:00.000Z",
-    reviewedBy: "Admin",
-  },
-];
+// SEED_VERIFICATIONS DIHAPUS.
+//
+// Dulu halaman ini men-seed localStorage dengan tiga
+// pengajuan palsu (Dr. Siti Rahayu dkk), sehingga admin
+// melihat psikolog yang tidak pernah mendaftar. Data
+// sekarang murni dari MongoDB.
 
-function loadVerifications(): VerificationSubmission[] {
-  try {
-    const raw = localStorage.getItem("hearme_verifications");
-    if (!raw) { localStorage.setItem("hearme_verifications", JSON.stringify(SEED_VERIFICATIONS)); return SEED_VERIFICATIONS; }
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) { localStorage.setItem("hearme_verifications", JSON.stringify(SEED_VERIFICATIONS)); return SEED_VERIFICATIONS; }
-    return parsed;
-  } catch { return SEED_VERIFICATIONS; }
-}
+// ======================================================
+// DATA DARI BACKEND + MONGODB
+// ======================================================
+//
+// BUG YANG DIPERBAIKI:
+//
+// Halaman ini dulu menyimpan pengajuan verifikasi di
+// localStorage "hearme_verifications" dan di-seed dari
+// SEED_VERIFICATIONS. Artinya:
+//
+//   - pengajuan NYATA dari psikolog tidak pernah terlihat
+//     admin (psikolog mengirim ke MongoDB lewat
+//     verificationAPI.submit, admin membaca localStorage)
+//   - persetujuan admin TIDAK PERNAH tersimpan, jadi
+//     psikolog tetap "pending" di database dan tidak bisa
+//     menerima booking
+//
+// Sekarang:
+//
+//   GET   /api/verification            (semua pengajuan)
+//   PATCH /api/verification/:id/review (setujui / tolak)
+//
+// Backend yang mengubah users.verificationStatus, jadi
+// psikolog yang disetujui langsung muncul di halaman
+// psikolog publik.
+//
+// ======================================================
 
-function saveVerifications(subs: VerificationSubmission[]) {
-  localStorage.setItem("hearme_verifications", JSON.stringify(subs));
+// Mengubah bentuk dari backend ke bentuk yang dipakai UI
+// ini, supaya markup/design tidak perlu diubah.
+function fromApi(s: ApiSubmission): VerificationSubmission {
+  const psych = (s as ApiSubmission & {
+    psychologist?: { _id?: string; name?: string; email?: string };
+  }).psychologist;
+
+  return {
+    id: String(s._id),
+    psychologistId: String(psych?._id || s.psychologistId || ""),
+    psychologistName: psych?.name || "Psikolog",
+    email: psych?.email || "",
+    submittedBy: psych?.name || "",
+    submittedAt: s.submittedAt,
+    status: s.status === "pending" ? "pending" : s.status === "approved" ? "approved" : "rejected",
+    submissionType: (s.submissionNumber || 1) > 1 ? "resubmission" : "initial",
+    submissionNumber: s.submissionNumber || 1,
+
+    documents: (s.documents || []).map((d) => ({
+      documentType: d.type,
+      fileName: d.fileName,
+      // Tipe & ukuran file tidak disimpan backend saat ini;
+      // ditebak dari nama file hanya untuk tampilan.
+      fileType: /\.pdf$/i.test(d.fileName || "")
+        ? "application/pdf"
+        : "image/*",
+      fileSize: 0,
+      fileUrl: d.fileUrl,
+      uploadedAt: s.submittedAt,
+    })),
+
+    rejectionReason: s.reason || undefined,
+    reviewedAt: s.reviewedAt || undefined,
+    reviewedBy: s.reviewedBy ? "Admin" : undefined,
+  };
 }
 
 const DOC_LABELS: Record<string, string> = {
@@ -240,73 +242,106 @@ export default function AdminVerificationPage() {
   const [showHistory, setShowHistory] = useState(false);
   const [historyTarget, setHistoryTarget] = useState<string | null>(null);
 
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const reload = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const all = await verificationAPI.getAll();
+
+      setVerifications(all.map(fromApi));
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Gagal mengambil data verifikasi"
+      );
+      setVerifications([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     setSession({
       role: String(authUser?.role || "admin"),
       name: String(authUser?.name || "Admin HearMe"),
     });
-    setVerifications(loadVerifications());
-  }, [navigate]);
 
-  const persist = (updated: VerificationSubmission[]) => {
-    setVerifications(updated);
-    saveVerifications(updated);
-  };
+    reload();
+  }, [authUser, reload]);
 
-  const handleApprove = (id: string) => {
-    // ======================================================
-    // ## DATABASE TEMPLATE IF CONNECTED ##
-    // TODO: UPDATE psychologist_verification_submissions SET status='approved', reviewed_at=NOW(), reviewed_by=admin_id WHERE id=?
-    // TODO: INSERT INTO verified_psychologists (psychologist_id, verified_by, verified_at, status) VALUES (...)
-    // ======================================================
-    const updated = verifications.map((v) =>
-      v.id === id ? { ...v, status: "approved" as const, reviewedAt: new Date().toISOString(), reviewedBy: session?.name } : v
-    );
-    persist(updated);
-    if (selected?.id === id) setSelected((s) => s ? { ...s, status: "approved" } : s);
+  /*
+   * Kedua aksi di bawah MENYIMPAN ke MongoDB.
+   *
+   * Backend yang mengubah users.verificationStatus, jadi
+   * psikolog yang disetujui langsung bisa muncul di halaman
+   * psikolog publik dan menerima booking.
+   */
 
-    // Notify psychologist
-    const ver = verifications.find((v) => v.id === id);
-    if (ver) {
-      const notifs = JSON.parse(localStorage.getItem("hearme_psych_notifications") || "[]");
-      notifs.unshift({
-        id: `pn${Date.now()}`,
-        title: "Verifikasi Disetujui",
-        message: "Selamat! Akun psikolog Anda telah berhasil diverifikasi dan kini dapat menerima konsultasi.",
-        time: "Baru saja",
-        read: false,
-        type: "verification_approved",
-      });
-      localStorage.setItem("hearme_psych_notifications", JSON.stringify(notifs));
+  const handleApprove = async (id: string) => {
+    try {
+      setBusy(true);
+      setError("");
+
+      await verificationAPI.review(id, "approved");
+
+      if (selected?.id === id) {
+        setSelected((s) => (s ? { ...s, status: "approved" } : s));
+      }
+
+      await reload();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Gagal menyetujui verifikasi"
+      );
+    } finally {
+      setBusy(false);
     }
   };
 
-  const handleReject = (id: string) => {
+  const handleReject = async (id: string) => {
+    // Alasan wajib. Backend juga menolak tanpa alasan.
     if (!rejectReason.trim()) return;
-    // ======================================================
-    // ## DATABASE TEMPLATE IF CONNECTED ##
-    // TODO: UPDATE psychologist_verification_submissions SET status='rejected', rejection_reason=?, reviewed_at=NOW() WHERE id=?
-    // ======================================================
-    const updated = verifications.map((v) =>
-      v.id === id ? { ...v, status: "rejected" as const, rejectionReason: rejectReason.trim(), adminNote: adminNote.trim(), reviewedAt: new Date().toISOString(), reviewedBy: session?.name } : v
-    );
-    persist(updated);
-    if (selected?.id === id) setSelected((s) => s ? { ...s, status: "rejected", rejectionReason: rejectReason.trim() } : s);
 
-    // Notify psychologist
-    const notifs = JSON.parse(localStorage.getItem("hearme_psych_notifications") || "[]");
-    notifs.unshift({
-      id: `pn${Date.now()}`,
-      title: "Verification Failed",
-      message: `Your psychologist verification was not approved.\n\nReason:\n${rejectReason.trim()}`,
-      time: "Baru saja",
-      read: false,
-      type: "verification_rejected",
-    });
-    localStorage.setItem("hearme_psych_notifications", JSON.stringify(notifs));
-    setRejectReason("");
-    setAdminNote("");
-    setShowRejectInput(false);
+    try {
+      setBusy(true);
+      setError("");
+
+      const note = adminNote.trim()
+        ? `${rejectReason.trim()}\n\nCatatan admin: ${adminNote.trim()}`
+        : rejectReason.trim();
+
+      await verificationAPI.review(id, "rejected", note);
+
+      if (selected?.id === id) {
+        setSelected((s) =>
+          s
+            ? { ...s, status: "rejected", rejectionReason: rejectReason.trim() }
+            : s
+        );
+      }
+
+      setRejectReason("");
+      setAdminNote("");
+      setShowRejectInput(false);
+
+      await reload();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Gagal menolak verifikasi"
+      );
+    } finally {
+      setBusy(false);
+    }
   };
 
   if (!session) return null;
@@ -367,6 +402,13 @@ export default function AdminVerificationPage() {
           })}
         </div>
 
+        {/* Error */}
+        {error && (
+          <div className="mb-4 bg-red-50 border border-red-100 text-red-600 text-sm rounded-2xl px-5 py-3">
+            {error}
+          </div>
+        )}
+
         {/* Table */}
         <div className="bg-white rounded-2xl border border-purple-100 overflow-hidden">
           <table className="w-full text-sm">
@@ -378,8 +420,16 @@ export default function AdminVerificationPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 ? (
-                <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-gray-400">Tidak ada data verifikasi</td></tr>
+              {loading ? (
+                [0, 1, 2].map((i) => (
+                  <tr key={i} className="border-t border-gray-50">
+                    <td colSpan={7} className="px-5 py-4">
+                      <div className="h-4 bg-purple-50 rounded animate-pulse" />
+                    </td>
+                  </tr>
+                ))
+              ) : filtered.length === 0 ? (
+                <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-gray-400">Belum ada pengajuan verifikasi</td></tr>
               ) : filtered.map((v) => (
                 <tr key={v.id} className="border-t border-gray-50 hover:bg-gray-50/50 transition-colors">
                   <td className="px-5 py-3.5 font-mono text-xs text-gray-500">{v.psychologistId.slice(-8)}</td>
@@ -542,9 +592,9 @@ export default function AdminVerificationPage() {
                       <div className="flex gap-2">
                         <button onClick={() => { setShowRejectInput(false); setRejectReason(""); setAdminNote(""); }}
                           className="flex-1 py-2.5 text-sm font-semibold text-gray-600 bg-gray-100 rounded-xl hover:bg-gray-200">Batal</button>
-                        <button onClick={() => handleReject(selected.id)} disabled={!rejectReason.trim()}
+                        <button onClick={() => handleReject(selected.id)} disabled={!rejectReason.trim() || busy}
                           className="flex-1 py-2.5 text-sm font-semibold text-white bg-red-500 rounded-xl hover:bg-red-600 disabled:opacity-50">
-                          Konfirmasi Tolak
+                          {busy ? "Memproses..." : "Konfirmasi Tolak"}
                         </button>
                       </div>
                     </div>
@@ -554,9 +604,9 @@ export default function AdminVerificationPage() {
                         className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-red-200 text-red-600 text-sm font-semibold hover:bg-red-50 transition-colors">
                         <XCircle size={15} /> Tolak
                       </button>
-                      <button onClick={() => handleApprove(selected.id)}
-                        className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-white text-sm font-semibold bg-green-500 hover:bg-green-600 transition-colors">
-                        <CheckCircle size={15} /> Setujui
+                      <button onClick={() => handleApprove(selected.id)} disabled={busy}
+                        className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-white text-sm font-semibold bg-green-500 hover:bg-green-600 disabled:opacity-50 transition-colors">
+                        <CheckCircle size={15} /> {busy ? "Memproses..." : "Setujui"}
                       </button>
                     </div>
                   )}

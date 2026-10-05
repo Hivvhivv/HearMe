@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useNavigate, useLocation, Link } from "react-router-dom"
 import { useAuth } from "../../contexts/AuthContext"
+import { forumAPI, type BanDuration } from "../../api/forum.api"
 import AdminSidebar from "../../components/AdminSidebar"
 import {
   LayoutDashboard,
@@ -75,6 +76,55 @@ export default function AdminForumPage() {
     duration: "1d",
   })
   const [formError, setFormError] = useState("")
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+
+  /*
+   * DAFTAR PEMBATASAN DARI MONGODB.
+   *
+   * Ban yang sudah kedaluwarsa tidak ditampilkan sebagai
+   * aktif — backend menandainya lewat flag `active`.
+   */
+  const reload = useCallback(async () => {
+    try {
+      setLoading(true)
+      setError("")
+
+      const rows = await forumAPI.adminGetBans()
+
+      setBans(
+        rows
+          .filter((b) => b.active)
+          .map((b) => ({
+            id: b.userId,
+            userId: b.userId,
+            userName: b.name,
+            reason: b.reason || "-",
+            duration:
+              DURATION_OPTIONS.find((d) => d.value === b.duration)?.label ||
+              b.duration ||
+              "-",
+            bannedAt: "-",
+            expiresAt: b.bannedUntil
+              ? new Date(b.bannedUntil).toLocaleDateString("id-ID", {
+                  day: "numeric",
+                  month: "long",
+                  year: "numeric",
+                })
+              : "Permanen",
+          })),
+      )
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Gagal mengambil daftar pembatasan",
+      )
+      setBans([])
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     setSession({
@@ -82,47 +132,56 @@ export default function AdminForumPage() {
       name: String(authUser?.name || "Admin HearMe"),
     })
 
-   const bansRaw = localStorage.getItem("hearme_forum_bans")
+    reload()
+  }, [authUser, reload])
 
-if (bansRaw) {
-  setBans(JSON.parse(bansRaw))
-}
-  }, [navigate])
-
-  const saveBans = (updated: ForumBan[]) => {
-    setBans(updated)
-    localStorage.setItem("hearme_forum_bans", JSON.stringify(updated))
-  }
-
-  const handleBan = () => {
-    if (!form.userId.trim() || !form.userName.trim() || !form.reason.trim()) {
-      setFormError("Semua kolom harus diisi.")
+  const handleBan = async () => {
+    if (!form.userId.trim() || !form.reason.trim()) {
+      setFormError("User ID dan alasan harus diisi.")
       return
     }
-    const now = new Date()
-    const newBan: ForumBan = {
-      id: crypto.randomUUID(),
-      userId: form.userId.trim(),
-      userName: form.userName.trim(),
-      reason: form.reason.trim(),
-      duration:
-        DURATION_OPTIONS.find((d) => d.value === form.duration)?.label ??
-        form.duration,
-      bannedAt: now.toLocaleDateString("id-ID", {
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-      }),
-      expiresAt: calcExpiry(form.duration),
+
+    try {
+      setFormError("")
+
+      /*
+       * Ban memakai USER ID, bukan nama.
+       *
+       * Versi lama menyimpan apa pun yang diketik admin ke
+       * localStorage — tidak pernah terhubung ke akun nyata,
+       * jadi user yang "di-ban" tetap bisa posting.
+       *
+       * Backend juga menolak mem-ban akun admin.
+       */
+      await forumAPI.adminBanUser(
+        form.userId.trim(),
+        form.duration as BanDuration,
+        form.reason.trim(),
+      )
+
+      setShowModal(false)
+      setForm({ userId: "", userName: "", reason: "", duration: "1d" })
+
+      await reload()
+    } catch (err) {
+      setFormError(
+        err instanceof Error ? err.message : "Gagal memberi pembatasan",
+      )
     }
-    saveBans([newBan, ...bans])
-    setShowModal(false)
-    setForm({ userId: "", userName: "", reason: "", duration: "1d" })
-    setFormError("")
   }
 
-  const handleUnban = (id: string) => {
-    saveBans(bans.filter((b) => b.id !== id))
+  const handleUnban = async (userId: string) => {
+    try {
+      setError("")
+
+      await forumAPI.adminUnbanUser(userId)
+
+      await reload()
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Gagal mencabut pembatasan",
+      )
+    }
   }
 
   const handleLogout = async () => {

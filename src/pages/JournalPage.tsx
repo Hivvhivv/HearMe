@@ -1,8 +1,32 @@
-import { useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { Plus, X, BookOpen, Smile, ArrowLeft, Image, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import DashboardNavbar from "../components/DashboardNavbar";
 import Footer from "../components/Footer";
+import {
+  journalAPI,
+  MAX_JOURNAL_IMAGES,
+  type JournalEntry as ApiJournal,
+} from "../api/journal.api";
+
+// ======================================================
+// JURNAL — DARI BACKEND + MONGODB
+// ======================================================
+//
+// Sebelumnya jurnal hanya ada di localStorage
+// ("hearme_journals"), jadi hilang kalau user berganti
+// browser, dan gambar disimpan sebagai base64 di dalamnya.
+//
+// Sekarang:
+//
+//   GET/POST/PATCH/DELETE /api/journals
+//
+// Backend memfilter dengan userId dari JWT, jadi jurnal
+// user lain tidak mungkin terbaca. Gambar divalidasi
+// (MIME, ukuran, magic bytes), disimpan sebagai berkas,
+// dan MongoDB hanya menyimpan URL-nya.
+//
+// ======================================================
 
 interface JournalEntry {
   id: string;
@@ -11,6 +35,19 @@ interface JournalEntry {
   mood: string;
   images: string[];
   date: string;
+}
+
+// `date` dipakai markup yang sudah ada; backend memberi
+// `createdAt`. Dipetakan di sini agar design tidak berubah.
+function fromApi(j: ApiJournal): JournalEntry {
+  return {
+    id: j.id,
+    title: j.title,
+    content: j.content,
+    mood: j.mood,
+    images: j.images || [],
+    date: j.createdAt,
+  };
 }
 
 const moodOptions = [
@@ -22,40 +59,102 @@ const moodOptions = [
   { id: "angry", emoji: "😤", label: "Angry" },
 ];
 
-const defaultEntries: JournalEntry[] = [
-  { id: "j1", title: "Hari yang melelahkan", content: "Hari ini sangat berat tapi aku berhasil melewatinya. Senang bisa sampai malam dengan selamat.", mood: "okay", images: [], date: new Date(Date.now() - 86400000).toISOString() },
-  { id: "j2", title: "Bersyukur untuk hal kecil", content: "Pagi ini matahari bersinar cerah dan secangkir kopi terasa sempurna. Kadang hal kecil inilah yang membuat segalanya lebih baik.", mood: "grateful", images: [], date: new Date(Date.now() - 86400000 * 3).toISOString() },
-];
+// defaultEntries DIHAPUS: dulu jurnal contoh ("Hari yang
+// melelahkan") muncul sebagai milik user padahal bukan
+// tulisannya. Sekarang daftar kosong = empty state jujur.
 
-const MAX_IMAGES = 5;
+const MAX_IMAGES = MAX_JOURNAL_IMAGES;
 
 export default function JournalPage() {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [entries, setEntries] = useState<JournalEntry[]>(() => {
-    const saved = localStorage.getItem("hearme_journals");
-    return saved ? JSON.parse(saved) : defaultEntries;
-  });
+
+  const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ title: "", content: "", mood: "happy", images: [] as string[] });
   const [viewEntry, setViewEntry] = useState<JournalEntry | null>(null);
 
-  const save = () => {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  // ====================================================
+  // MUAT DARI MONGODB
+  // ====================================================
+
+  const reload = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const result = await journalAPI.list({ limit: 60 });
+
+      setEntries(result.journals.map(fromApi));
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Gagal mengambil jurnal"
+      );
+      setEntries([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  const save = async () => {
     if (!form.title || !form.content) return;
-    const entry: JournalEntry = { id: `j${Date.now()}`, ...form, date: new Date().toISOString() };
-    const updated = [entry, ...entries];
-    setEntries(updated);
-    localStorage.setItem("hearme_journals", JSON.stringify(updated));
-    setForm({ title: "", content: "", mood: "happy", images: [] });
-    setShowForm(false);
+
+    try {
+      setSaving(true);
+      setError("");
+
+      // Gambar dikirim sebagai data URL; backend yang
+      // memvalidasi dan menyimpannya sebagai berkas.
+      await journalAPI.create({
+        title: form.title,
+        content: form.content,
+        mood: form.mood,
+        images: form.images,
+      });
+
+      setForm({ title: "", content: "", mood: "happy", images: [] });
+      setShowForm(false);
+
+      await reload();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Gagal menyimpan jurnal"
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const deleteEntry = (id: string) => {
+  const deleteEntry = async (id: string) => {
     if (!window.confirm("Hapus jurnal ini?")) return;
-    const updated = entries.filter((e) => e.id !== id);
-    setEntries(updated);
-    localStorage.setItem("hearme_journals", JSON.stringify(updated));
-    if (viewEntry?.id === id) setViewEntry(null);
+
+    try {
+      setError("");
+
+      await journalAPI.delete(id);
+
+      if (viewEntry?.id === id) setViewEntry(null);
+
+      await reload();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Gagal menghapus jurnal"
+      );
+    }
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -103,7 +202,30 @@ export default function JournalPage() {
           </button>
         </div>
 
-        {entries.length === 0 ? (
+        {error && (
+          <div className="mb-4 bg-red-50 border border-red-100 text-red-600 text-sm rounded-2xl px-5 py-3">
+            {error}
+          </div>
+        )}
+
+        {loading && (
+          <div className="space-y-3">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="bg-white rounded-2xl p-5 border border-purple-50 animate-pulse">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 rounded-xl bg-purple-100" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-4 bg-purple-100 rounded w-1/2" />
+                    <div className="h-3 bg-purple-50 rounded w-1/4" />
+                  </div>
+                </div>
+                <div className="h-3 bg-purple-50 rounded w-full" />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!loading && entries.length === 0 ? (
           <div className="text-center py-20 text-gray-400">
             <BookOpen size={48} className="mx-auto mb-4 opacity-30" />
             <p className="font-semibold">Belum ada jurnal</p>
@@ -111,7 +233,7 @@ export default function JournalPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {entries.map((e) => (
+            {!loading && entries.map((e) => (
               <div
                 key={e.id}
                 className="bg-white rounded-2xl p-5 border border-purple-50 hover:border-purple-200 hover:shadow-sm transition-all cursor-pointer"
@@ -266,8 +388,8 @@ export default function JournalPage() {
                 )}
               </div>
 
-              <button onClick={save} className="w-full bg-[#6F3FB5] text-white font-semibold py-3 rounded-xl hover:bg-purple-800 transition-colors">
-                Simpan Jurnal
+              <button onClick={save} disabled={saving} className="w-full bg-[#6F3FB5] disabled:opacity-60 text-white font-semibold py-3 rounded-xl hover:bg-purple-800 transition-colors">
+                {saving ? "Menyimpan..." : "Simpan Jurnal"}
               </button>
             </div>
           </div>

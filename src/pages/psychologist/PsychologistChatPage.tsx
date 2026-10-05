@@ -1,30 +1,29 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, Send, Paperclip, Phone, Video, User } from "lucide-react";
 import PsychologistNavbar from "../../components/PsychologistNavbar";
-import { consultationChatService } from "../../services";
+import { chatSocket, type ChatMessage as ApiMessage } from "../../api/socket";
+import { consultationAPI } from "../../api/consultation.api";
 
 // ======================================================
-// ## DATABASE TEMPLATE IF CONNECTED ##
-//
-// TABLE: consultation_messages
-// FIELDS:
-//   id, consultation_id, sender_id, sender_role,
-//   message, attachment_url, created_at
-//
-// sender_role: user | psychologist
-//
-// Real-time: Firebase Realtime DB / Supabase Realtime / WebSocket
+// CHAT KONSULTASI — REALTIME (SOCKET.IO)
 // ======================================================
-
-// ======================================================
-// ## API TEMPLATE IF CONNECTED ##
 //
-// SERVICE: Real-time Messaging
-// ENDPOINT EXAMPLE:
-//   GET  /api/consultations/:id/messages
-//   POST /api/consultations/:id/messages
-//   WS   /ws/consultations/:id
+// Sebelumnya halaman ini menyimpan pesan di localStorage
+// dan mem-POLLING localStorage setiap 2 detik — yang tentu
+// tidak akan pernah menerima pesan dari device lain.
+// PSYCH_ID juga di-hardcode "p1".
+//
+// Sekarang:
+//
+//   WS  consultation:join / :message / :typing
+//
+// Backend memverifikasi bahwa socket ini memang PESERTA
+// konsultasi sebelum mengizinkan join maupun kirim pesan,
+// dan senderId diambil dari session — bukan dari payload.
+//
+// Pesan dikirim ke ROOM, jadi semua device peserta yang
+// online menerimanya.
 //
 // ======================================================
 
@@ -35,7 +34,17 @@ interface ChatMessage {
   time: string;
 }
 
-const PSYCH_ID = "p1";
+function toChatMessage(m: ApiMessage): ChatMessage {
+  return {
+    id: String(m._id),
+    sender: m.senderRole === "psychologist" ? "psychologist" : "user",
+    text: m.content,
+    time: new Date(m.createdAt).toLocaleTimeString("id-ID", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+  };
+}
 
 export default function PsychologistChatPage() {
   const { id } = useParams<{ id: string }>();
@@ -44,51 +53,157 @@ export default function PsychologistChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [consultation, setConsultation] = useState<{ userName?: string; date?: string; time?: string; status?: string } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const loadMessages = () => {
-    const msgs = consultationChatService.getMessages(id || "");
-    setMessages(msgs);
-  };
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [sending, setSending] = useState(false);
+  const [peerTyping, setPeerTyping] = useState(false);
+
+  // ====================================================
+  // INFO KONSULTASI
+  // ====================================================
+  //
+  // Backend sudah memfilter berdasarkan psikolog yang
+  // login, jadi tidak ada PSYCH_ID yang perlu dicocokkan.
+  //
+  // ====================================================
 
   useEffect(() => {
-    // Load consultation info
-    try {
-      const all: { id: string; userName?: string; date?: string; time?: string; status?: string; psychologistId?: string }[] =
-        JSON.parse(localStorage.getItem("hearme_consultations_v2") || "[]");
-      const c = all.find((x) => x.id === id && (x.psychologistId === PSYCH_ID || !x.psychologistId));
-      if (c) setConsultation(c);
-    } catch {}
+    let cancelled = false;
 
-    loadMessages();
+    const load = async () => {
+      try {
+        const all = await consultationAPI.getMyConsultations();
 
-    // Poll for new messages every 2 seconds (simulates real-time)
-    pollRef.current = setInterval(loadMessages, 2000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+        if (cancelled) return;
+
+        const c = all.find((x) => x.id === id);
+
+        if (c) {
+          setConsultation({
+            userName: c.userName,
+            date: c.date,
+            time: c.time,
+            status: c.status,
+          });
+        }
+      } catch {
+        // Info header bukan hal kritis.
+      }
+    };
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  // ====================================================
+  // SOCKET: JOIN + LISTENER
+  // ====================================================
+
+  useEffect(() => {
+    if (!id) return;
+
+    let cancelled = false;
+    let offMessage: (() => void) | undefined;
+    let offTyping: (() => void) | undefined;
+
+    const start = async () => {
+      try {
+        setLoading(true);
+        setError("");
+
+        const result = await chatSocket.join(id);
+
+        if (cancelled) return;
+
+        if (!result.ok) {
+          setError(
+            result.code === "FORBIDDEN"
+              ? "Kamu bukan peserta konsultasi ini."
+              : "Gagal menyambung ke ruang konsultasi."
+          );
+          return;
+        }
+
+        // Riwayat dikirim backend saat join.
+        setMessages(result.messages.map(toChatMessage));
+
+        offMessage = chatSocket.onMessage((payload) => {
+          if (payload.consultationId !== id) return;
+
+          setMessages((prev) => {
+            // Cegah duplikat: pesan sendiri juga datang
+            // kembali lewat room.
+            if (prev.some((m) => m.id === String(payload.message._id))) {
+              return prev;
+            }
+
+            return [...prev, toChatMessage(payload.message)];
+          });
+        });
+
+        offTyping = chatSocket.onTyping((payload) => {
+          if (payload.consultationId !== id) return;
+
+          setPeerTyping(payload.typing);
+        });
+
+        chatSocket.markRead(id);
+      } catch {
+        if (!cancelled) {
+          setError("Gagal menyambung ke ruang konsultasi.");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    start();
+
+    return () => {
+      cancelled = true;
+      offMessage?.();
+      offTyping?.();
+      chatSocket.leave(id);
+    };
   }, [id]);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   const userName = consultation?.userName || "Pasien";
 
-  const send = () => {
+  const notifyTyping = useCallback(
+    (value: string) => {
+      if (id) chatSocket.typing(id, value.length > 0);
+    },
+    [id]
+  );
+
+  const send = async () => {
     const text = input.trim();
-    if (!text) return;
+    if (!text || !id) return;
 
-    const msg: ChatMessage = {
-      id: `pm${Date.now()}`,
-      sender: "psychologist",
-      text,
-      time: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }),
-    };
+    try {
+      setSending(true);
+      setError("");
 
-    // ======================================================
-    // ## DATABASE TEMPLATE IF CONNECTED ##
-    // TODO: INSERT INTO consultation_messages (consultation_id, sender_id, sender_role, message) VALUES (?)
-    // ======================================================
-    consultationChatService.saveMessage(id || "", msg);
-    setMessages((prev) => [...prev, msg]);
-    setInput("");
+      const result = await chatSocket.send(id, text);
+
+      if (!result.ok) {
+        setError(result.message || "Gagal mengirim pesan.");
+        return;
+      }
+
+      // Pesan ditambahkan lewat listener room, jadi di sini
+      // cukup bersihkan input.
+      setInput("");
+      chatSocket.typing(id, false);
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -128,12 +243,28 @@ export default function PsychologistChatPage() {
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto space-y-4 pr-1 pb-4" style={{ maxHeight: "calc(100vh - 360px)" }}>
-          {messages.length === 0 && (
+          {error && (
+            <div className="bg-red-50 border border-red-100 text-red-600 text-sm rounded-2xl px-4 py-3">
+              {error}
+            </div>
+          )}
+
+          {loading && (
+            <div className="space-y-3">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className={i % 2 ? "flex justify-end" : "flex"}>
+                  <div className="h-10 w-48 rounded-2xl bg-purple-50 animate-pulse" />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!loading && !error && messages.length === 0 && (
             <div className="text-center py-12 text-gray-400">
               <p className="text-sm">Belum ada pesan. Mulai percakapan dengan pasien.</p>
             </div>
           )}
-          {messages.map((m) => {
+          {!loading && messages.map((m) => {
             const isMe = m.sender === "psychologist";
             return (
               <div key={m.id} className={`flex items-end gap-2 animate-fade-in ${isMe ? "flex-row-reverse" : ""}`}>
@@ -153,6 +284,19 @@ export default function PsychologistChatPage() {
               </div>
             );
           })}
+          {/* Indikator "sedang menulis" dari lawan bicara —
+              dikirim lewat socket, tidak menyentuh database. */}
+          {peerTyping && (
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <span className="flex gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-bounce" />
+                <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-bounce [animation-delay:0.15s]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-bounce [animation-delay:0.3s]" />
+              </span>
+              {userName} sedang menulis...
+            </div>
+          )}
+
           <div ref={bottomRef} />
         </div>
 
@@ -161,11 +305,11 @@ export default function PsychologistChatPage() {
           <button className="p-3 bg-white border border-purple-100 rounded-2xl text-gray-400 hover:text-[#6F3FB5] hover:border-purple-300 transition-colors">
             <Paperclip size={18} />
           </button>
-          <input type="text" value={input} onChange={(e) => setInput(e.target.value)}
+          <input type="text" value={input} onChange={(e) => { setInput(e.target.value); notifyTyping(e.target.value); }}
             onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
             placeholder="Ketik pesan ke pasien..."
             className="flex-1 bg-white border border-purple-100 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#6F3FB5]/20 focus:border-[#6F3FB5] transition-colors" />
-          <button onClick={send} disabled={!input.trim()}
+          <button onClick={send} disabled={!input.trim() || sending}
             className="bg-[#6F3FB5] disabled:bg-purple-300 text-white p-3 rounded-2xl hover:bg-purple-800 transition-colors shadow-sm shadow-purple-200">
             <Send size={18} />
           </button>

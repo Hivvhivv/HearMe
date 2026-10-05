@@ -80,15 +80,16 @@ function UserRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function getPsychVerificationStatus(): string {
-  try {
-    const vs: { status: string; submittedBy?: string }[] = JSON.parse(localStorage.getItem("hearme_verifications") || "[]");
-    const u = JSON.parse(localStorage.getItem("hearme_user") || "{}");
-    const mine = vs.filter((v) => v.submittedBy === u.name || v.submittedBy === u.email);
-    if (mine.length === 0) return "none";
-    return mine[mine.length - 1].status || "pending";
-  } catch { return "none"; }
-}
+// getPsychVerificationStatus() DIHAPUS.
+//
+// Fungsi itu membaca localStorage "hearme_verifications"
+// dan mencocokkan dengan NAMA user — artinya seorang
+// psikolog bisa meloloskan dirinya sendiri hanya dengan
+// menulis status "approved" ke localStorage dari console.
+//
+// Status verifikasi sekarang hanya datang dari DATABASE
+// lewat AuthContext (GET /api/users/me), dan backend juga
+// memeriksanya ulang di setiap endpoint psikolog.
 
 function PsychologistRoute({ children, requiresVerification = false }: { children: React.ReactNode; requiresVerification?: boolean }) {
   const { loading, isAuthenticated, role, user } = useAuth();
@@ -99,13 +100,11 @@ function PsychologistRoute({ children, requiresVerification = false }: { childre
   if (role === "admin") return <Navigate to="/admin/dashboard" replace />;
 
   if (requiresVerification) {
-    // Status verifikasi diambil dari SERVER (lewat context),
-    // dengan localStorage hanya sebagai cadangan. Sebelumnya
-    // keputusan ini sepenuhnya berdasarkan localStorage yang
-    // bisa dimanipulasi dari browser.
-    const status =
-      (user?.verificationStatus as string) ||
-      getPsychVerificationStatus();
+    // Status verifikasi HANYA dari server (lewat context),
+    // tanpa cadangan localStorage. Guard ini sekadar lapisan
+    // UI — endpoint psikolog di backend tetap memeriksa
+    // sendiri lewat requireVerifiedPsychologist.
+    const status = (user?.verificationStatus as string) || "none";
 
     if (status !== "approved") {
       return <Navigate to="/psychologist/dashboard?blocked=1" replace />;

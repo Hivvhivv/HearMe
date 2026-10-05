@@ -1,6 +1,10 @@
-import { useEffect, useState, useRef, ChangeEvent } from "react"
+import { useCallback, useEffect, useState, useRef, ChangeEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import { useAuth } from "../../contexts/AuthContext"
+import {
+  mindHubAPI,
+  type MindHubCategory,
+} from "../../api/mindhub.api"
 import AdminSidebar from "../../components/AdminSidebar"
 import {
   Plus,
@@ -346,27 +350,70 @@ export default function AdminMindHubPage() {
   const [editingItem, setEditingItem] = useState<MindHubArticle | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<MindHubArticle | null>(null)
 
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+
+  /*
+   * DATA DARI MONGODB.
+   *
+   * Dulu halaman ini memakai localStorage
+   * "hearme_mindhub_admin" — artinya konten yang dibuat
+   * admin hanya ada di browser admin itu sendiri dan tidak
+   * pernah terlihat user.
+   *
+   * Endpoint admin mengembalikan SEMUA konten termasuk
+   * draft; endpoint publik /api/mind-hub hanya yang
+   * published.
+   */
+  const reload = useCallback(async () => {
+    try {
+      setLoading(true)
+      setError("")
+
+      const contents = await mindHubAPI.adminList()
+
+      setItems(
+        contents.map((c) =>
+          migrateItem({
+            id: c.id,
+            title: c.title,
+            category: c.category,
+            thumbnail: c.image,
+            image: c.image,
+            shortDescription: c.excerpt,
+            excerpt: c.excerpt,
+            content: c.content,
+            duration: c.duration,
+            status: c.status,
+            published: c.status === "published",
+            tags: "",
+            createdBy: "Admin",
+            createdAt: c.createdAt || "",
+            updatedAt: c.updatedAt || "",
+          } as MindHubArticle)
+        )
+      )
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Gagal mengambil konten Mind Hub"
+      )
+      setItems([])
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
   setSession({
     role: String(authUser?.role || "admin"),
     name: String(authUser?.name || "Admin HearMe"),
   });
 
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-
-    if (raw) {
-      setItems(JSON.parse(raw).map(migrateItem));
-    }
-  } catch {
-    setItems([]);
-  }
-}, [navigate]);
-
-  const persist = (next: MindHubArticle[]) => {
-    setItems(next)
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-  }
+  reload();
+}, [authUser, reload]);
 
   const handleLogout = async () => {
   await doLogout();
@@ -374,61 +421,96 @@ export default function AdminMindHubPage() {
   navigate("/admin/login");
 };
 
-  const handleSave = (
+  /*
+   * Semua aksi di bawah menulis ke MongoDB.
+   *
+   * Endpoint admin memakai role guard, jadi user biasa yang
+   * memanggilnya langsung tetap dibalas 403 — tombol yang
+   * disembunyikan di UI bukan pengamannya.
+   */
+
+  const handleSave = async (
     data: Omit<MindHubArticle, "id" | "status" | "createdAt" | "updatedAt" | "createdBy">,
   ) => {
-    const now = new Date().toISOString()
-    if (editingItem) {
-      persist(
-        items.map((it) =>
-          it.id === editingItem.id
-            ? {
-                ...it,
-                ...data,
-                image: data.thumbnail,
-                excerpt: data.shortDescription,
-                updatedAt: now,
-              }
-            : it,
-        ),
-      )
-    } else {
-      const newItem: MindHubArticle = {
-        id: `mh_${Date.now()}`,
-        ...data,
-        image: data.thumbnail,
+    try {
+      setBusy(true)
+      setError("")
+
+      const payload = {
+        title: data.title,
+        content: data.content,
+        category: data.category as MindHubCategory,
         excerpt: data.shortDescription,
-        status: "draft",
-        published: false,
-        createdBy: "Admin",
-        createdAt: now,
-        updatedAt: now,
+        duration: data.duration,
+
+        // Thumbnail bisa data URL (gambar baru) atau URL
+        // yang sudah tersimpan. Backend memvalidasi dan
+        // menyimpannya sebagai berkas.
+        image: data.thumbnail,
       }
-      persist([...items, newItem])
+
+      if (editingItem) {
+        await mindHubAPI.update(editingItem.id, payload)
+      } else {
+        // Konten baru masuk sebagai DRAFT, jadi tidak
+        // langsung terlihat user sebelum dipublikasikan.
+        await mindHubAPI.create({ ...payload, status: "draft" })
+      }
+
+      setModalOpen(false)
+      setEditingItem(null)
+
+      await reload()
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Gagal menyimpan konten"
+      )
+    } finally {
+      setBusy(false)
     }
-    setModalOpen(false)
-    setEditingItem(null)
   }
 
-  const handleDelete = (id: string) => {
-    persist(items.filter((it) => it.id !== id))
+  const handleDelete = async (id: string) => {
     setDeleteTarget(null)
+
+    try {
+      setBusy(true)
+      setError("")
+
+      await mindHubAPI.delete(id)
+
+      await reload()
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Gagal menghapus konten"
+      )
+    } finally {
+      setBusy(false)
+    }
   }
 
-  const cycleStatus = (id: string) => {
+  // draft -> published -> archived -> draft
+  const cycleStatus = async (id: string) => {
+    const current = items.find((it) => it.id === id)
+    if (!current) return
+
     const order: MindHubArticle["status"][] = ["draft", "published", "archived"]
-    persist(
-      items.map((it) => {
-        if (it.id !== id) return it
-        const next = order[(order.indexOf(it.status) + 1) % order.length]
-        return {
-          ...it,
-          status: next,
-          published: next === "published",
-          updatedAt: new Date().toISOString(),
-        }
-      }),
-    )
+    const next = order[(order.indexOf(current.status) + 1) % order.length]
+
+    try {
+      setBusy(true)
+      setError("")
+
+      await mindHubAPI.setStatus(id, next)
+
+      await reload()
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Gagal mengubah status"
+      )
+    } finally {
+      setBusy(false)
+    }
   }
 
   const [session, setSession] =

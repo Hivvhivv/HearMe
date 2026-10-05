@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import {
   Heart, MessageCircle, Plus, X, Bookmark, EyeOff, Eye,
   User, Lock, Image, Trash2, Pencil, Send, Share2, Flag, CheckCircle
@@ -6,7 +6,31 @@ import {
 import { Link } from "react-router-dom";
 import DashboardNavbar from "../components/DashboardNavbar";
 import Footer from "../components/Footer";
-import { forumPosts as mockPosts } from "../data/mockData";
+import type { ForumPost as SharedForumPost } from "../types";
+import {
+  forumAPI,
+  REPORT_REASONS,
+  type BanStatus,
+  type ForumReply as ApiReply,
+} from "../api/forum.api";
+
+// ======================================================
+// FORUM — DARI BACKEND + MONGODB
+// ======================================================
+//
+// Sebelumnya seluruh forum ada di localStorage dan di-seed
+// dari mockData, jadi post seorang user tidak pernah
+// terlihat user lain dan report tidak pernah sampai ke
+// admin.
+//
+// Yang sekarang dijaga BACKEND, bukan UI:
+//
+//   - identitas penulis anonim tidak pernah dikirim
+//   - ownership (archive/delete) diverifikasi per request
+//   - user yang di-ban dibalas 403 saat post/reply/like
+//   - satu user hanya bisa melaporkan satu post sekali
+//
+// ======================================================
 
 // ======================================================
 // ## DATABASE TEMPLATE IF CONNECTED ##
@@ -26,79 +50,51 @@ import { forumPosts as mockPosts } from "../data/mockData";
 //
 // ======================================================
 
-const REPORT_REASONS = [
-  "Harassment / Bullying",
-  "Hate Speech",
-  "Sexual Content",
-  "Spam",
-  "Misinformation",
-  "Self-harm / Dangerous Content",
-  "Other",
-];
+// Daftar alasan diambil dari forum.api (REPORT_REASONS),
+// supaya nilai yang dikirim COCOK dengan enum backend.
+// Daftar lokal sebelumnya memakai label bebas ("Hate
+// Speech") yang akan ditolak backend sebagai 400.
 
-interface ForumReport {
-  id: string;
-  postId: string;
-  postTitle: string;
-  postContent: string;
-  postAuthor: string;
-  reporterUserId: string;
-  reason: string;
-  description: string;
-  status: "pending" | "reviewed" | "dismissed";
-  createdAt: string;
-  reviewedAt?: string;
-  reviewedBy?: string;
-}
+// interface ForumReport DIHAPUS: bentuknya datang dari
+// forum.api.ts.
 
-function loadReports(): ForumReport[] {
-  try { return JSON.parse(localStorage.getItem("hearme_forum_reports") || "[]"); }
-  catch { return []; }
-}
-function saveReports(r: ForumReport[]) {
-  localStorage.setItem("hearme_forum_reports", JSON.stringify(r));
-}
-
-function isUserBanned(): boolean {
-  try {
-    const bans: { userId: string; expiresAt: string | null }[] = JSON.parse(localStorage.getItem("hearme_user_bans") || "[]");
-    const ban = bans.find((b) => b.userId === CURRENT_USER_ID);
-    if (!ban) return false;
-    if (!ban.expiresAt) return true; // permanent
-    return new Date(ban.expiresAt) > new Date();
-  } catch { return false; }
-}
-
+// loadReports / saveReports / isUserBanned DIHAPUS.
+//
+// Report sekarang masuk MongoDB dan status ban diambil
+// dari GET /api/forums/ban-status. isUserBanned() yang
+// lama membaca localStorage -- artinya siapa pun bisa
+// menghapus ban-nya sendiri dari console browser.
 // ---- Report Modal ----
 function ReportModal({ post, onClose }: { post: { id: string; title: string; excerpt: string; author: string }; onClose: () => void }) {
   const [reason, setReason] = useState("");
   const [description, setDescription] = useState("");
   const [submitted, setSubmitted] = useState(false);
 
-  const handleSubmit = () => {
+  const [sending, setSending] = useState(false);
+  const [failed, setFailed] = useState("");
+
+  // Laporan dikirim ke MongoDB dan langsung masuk antrean
+  // moderasi admin. Backend menolak laporan kedua untuk
+  // post yang sama (409).
+  const handleSubmit = async () => {
     if (!reason) return;
-    // ======================================================
-    // ## API TEMPLATE IF CONNECTED ##
-    // TODO: POST /api/forum/reports
-    // SERVICE: Moderation Service
-    // ENDPOINT: POST /api/forum/reports
-    //   body: { post_id, reason, description }
-    // ======================================================
-    const reports = loadReports();
-    const newReport: ForumReport = {
-      id: `rep_${Date.now()}`,
-      postId: post.id,
-      postTitle: post.title,
-      postContent: post.excerpt,
-      postAuthor: post.author,
-      reporterUserId: CURRENT_USER_ID,
-      reason,
-      description,
-      status: "pending",
-      createdAt: new Date().toISOString(),
-    };
-    saveReports([...reports, newReport]);
-    setSubmitted(true);
+
+    try {
+      setSending(true);
+      setFailed("");
+
+      await forumAPI.report(post.id, reason, description);
+
+      setSubmitted(true);
+    } catch (err) {
+      setFailed(
+        err instanceof Error
+          ? err.message
+          : "Gagal mengirim laporan"
+      );
+    } finally {
+      setSending(false);
+    }
   };
 
   if (submitted) {
@@ -142,10 +138,10 @@ function ReportModal({ post, onClose }: { post: { id: string; title: string; exc
             <label className="block text-xs font-semibold text-gray-700 mb-2">Pilih Alasan <span className="text-red-500">*</span></label>
             <div className="space-y-2">
               {REPORT_REASONS.map((r) => (
-                <label key={r} className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${reason === r ? "border-[#6F3FB5] bg-[#F5EEFC]" : "border-gray-100 hover:border-purple-200"}`}>
-                  <input type="radio" name="report_reason" value={r} checked={reason === r}
-                    onChange={() => setReason(r)} className="accent-[#6F3FB5]" />
-                  <span className="text-sm text-gray-700">{r}</span>
+                <label key={r.value} className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${reason === r.value ? "border-[#6F3FB5] bg-[#F5EEFC]" : "border-gray-100 hover:border-purple-200"}`}>
+                  <input type="radio" name="report_reason" value={r.value} checked={reason === r.value}
+                    onChange={() => setReason(r.value)} className="accent-[#6F3FB5]" />
+                  <span className="text-sm text-gray-700">{r.label}</span>
                 </label>
               ))}
             </div>
@@ -165,11 +161,17 @@ function ReportModal({ post, onClose }: { post: { id: string; title: string; exc
             className="flex-1 py-2.5 text-sm font-semibold text-gray-600 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors">
             Cancel
           </button>
-          <button onClick={handleSubmit} disabled={!reason}
+          <button onClick={handleSubmit} disabled={!reason || sending}
             className="flex-1 py-2.5 text-sm font-semibold text-white bg-red-500 rounded-xl hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-            Submit Report
+            {sending ? "Mengirim..." : "Submit Report"}
           </button>
         </div>
+
+        {/* Pesan gagal dari backend, mis. sudah pernah
+            melaporkan post ini (409). */}
+        {failed && (
+          <p className="px-5 pb-4 text-xs text-red-500">{failed}</p>
+        )}
       </div>
     </div>
   );
@@ -180,73 +182,23 @@ const CURRENT_USER_NAME = "Kamu";
 
 interface ForumImage { url: string; }
 
-interface ForumReply {
-  id: string;
-  postId: string;
-  parentReplyId: string | null;
-  userId: string;
-  userName: string;
-  userAvatar?: string;
-  content: string;
-  likes: number;
-  liked: boolean;
-  createdAt: string;
-  depth: number; // 0 = direct reply, 1 = reply to reply, 2 = nested reply (max)
-}
+/*
+ * Tipe ForumPost diambil dari src/types (tipe bersama),
+ * ditambah `images` yang hanya dipakai tampilan di halaman
+ * ini. Sebelumnya halaman ini mendefinisikan ulang seluruh
+ * bentuknya — duplikat yang mudah melenceng dari tipe asli.
+ */
+type ForumPost = SharedForumPost & { images?: ForumImage[] };
 
-interface ForumPost {
-  id: string;
-  authorId: string;
-  author: string;
-  avatar: string;
-  category: string;
-  title: string;
-  excerpt: string;
-  likes: number;
-  comments: number;
-  time: string;
-  liked: boolean;
-  saved?: boolean;
-  archived?: boolean;
-  isAnonymous: boolean;
-  visibility: "public" | "private";
-  images?: ForumImage[];
-  content?: string;
-}
+// interface ForumReply DIHAPUS: bentuk balasan datang
+// dari forum.api.ts (ApiReply).
 
 const categories = ["Semua", "Kecemasan", "Hubungan", "Studi", "Pekerjaan", "Self Improvement"];
 
-function loadPosts(): ForumPost[] {
-  const raw = localStorage.getItem("hearme_forum_v2");
-  if (!raw) {
-    const init: ForumPost[] = (mockPosts as ForumPost[]).map((p) => ({
-      ...p,
-      authorId: p.id === "f1" ? CURRENT_USER_ID : "other",
-      isAnonymous: false,
-      visibility: "public" as const,
-      saved: false,
-      archived: false,
-      images: [],
-    }));
-    localStorage.setItem("hearme_forum_v2", JSON.stringify(init));
-    return init;
-  }
-  return JSON.parse(raw);
-}
-
-function savePosts(posts: ForumPost[]) {
-  localStorage.setItem("hearme_forum_v2", JSON.stringify(posts));
-}
-
-function loadReplies(): ForumReply[] {
-  try { return JSON.parse(localStorage.getItem("hearme_forum_replies") || "[]"); }
-  catch { return []; }
-}
-
-function saveReplies(replies: ForumReply[]) {
-  localStorage.setItem("hearme_forum_replies", JSON.stringify(replies));
-}
-
+// loadPosts / savePosts / loadReplies / saveReplies
+// DIHAPUS: post dan balasan sekarang dari MongoDB lewat
+// forum.api.ts, bukan localStorage "hearme_forum_v2" dan
+// "hearme_forum_replies".
 function timeAgo(ts: string): string {
   const diff = Date.now() - new Date(ts).getTime();
   const m = Math.floor(diff / 60000);
@@ -282,197 +234,73 @@ function useImageUpload(maxImages = 5) {
 }
 
 // ---- Reply Thread Component ----
-function ReplyThread({
-  postId, replies, parentReplyId = null, depth = 0,
-  allReplies, onUpdate,
-}: {
-  postId: string;
-  replies: ForumReply[];
-  parentReplyId?: string | null;
-  depth?: number;
-  allReplies: ForumReply[];
-  onUpdate: (replies: ForumReply[]) => void;
-}) {
-  const [replyingTo, setReplyingTo] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [replyText, setReplyText] = useState("");
-  const [editText, setEditText] = useState("");
-
-  const levelReplies = replies.filter((r) => r.parentReplyId === parentReplyId);
-  if (levelReplies.length === 0) return null;
-
-  const handleLike = (id: string) => {
-    const updated = allReplies.map((r) =>
-      r.id === id ? { ...r, liked: !r.liked, likes: r.liked ? r.likes - 1 : r.likes + 1 } : r
-    );
-    onUpdate(updated);
-  };
-
-  const handleSubmitReply = (parentId: string) => {
-    if (!replyText.trim()) return;
-    const newReply: ForumReply = {
-      id: `r${Date.now()}`,
-      postId,
-      parentReplyId: parentId,
-      userId: CURRENT_USER_ID,
-      userName: CURRENT_USER_NAME,
-      content: replyText.trim(),
-      likes: 0,
-      liked: false,
-      createdAt: new Date().toISOString(),
-      depth: depth + 1,
-    };
-    const updated = [...allReplies, newReply];
-    onUpdate(updated);
-    setReplyText("");
-    setReplyingTo(null);
-  };
-
-  const handleEdit = (id: string) => {
-    if (!editText.trim()) return;
-    const updated = allReplies.map((r) => r.id === id ? { ...r, content: editText.trim() } : r);
-    onUpdate(updated);
-    setEditingId(null);
-    setEditText("");
-  };
-
-  const handleDelete = (id: string) => {
-    const updated = allReplies.filter((r) => r.id !== id && r.parentReplyId !== id);
-    onUpdate(updated);
-  };
-
-  return (
-    <div className={`flex flex-col gap-3 ${depth > 0 ? "ml-8 pl-3 border-l-2 border-purple-100" : ""}`}>
-      {levelReplies.map((reply) => (
-        <div key={reply.id} className="group">
-          <div className="flex items-start gap-2.5">
-            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#C9A9E9] to-[#6F3FB5] flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5">
-              {reply.userName[0]?.toUpperCase()}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="bg-[#FAF8FD] rounded-xl px-3 py-2.5 mb-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-xs font-bold text-gray-800">{reply.userName}</span>
-                  <span className="text-[10px] text-gray-400">{timeAgo(reply.createdAt)}</span>
-                </div>
-                {editingId === reply.id ? (
-                  <div className="flex gap-2 mt-1">
-                    <textarea
-                      value={editText}
-                      onChange={(e) => setEditText(e.target.value)}
-                      rows={2}
-                      className="flex-1 text-xs px-2 py-1.5 border border-purple-200 rounded-lg resize-none focus:outline-none focus:border-[#6F3FB5]"
-                    />
-                    <div className="flex flex-col gap-1">
-                      <button onClick={() => handleEdit(reply.id)}
-                        className="p-1.5 bg-[#6F3FB5] text-white rounded-lg hover:bg-[#5c32a0] transition-colors">
-                        <Send size={11} />
-                      </button>
-                      <button onClick={() => setEditingId(null)}
-                        className="p-1.5 bg-gray-100 text-gray-500 rounded-lg hover:bg-gray-200 transition-colors">
-                        <X size={11} />
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-xs text-gray-700 leading-relaxed">{reply.content}</p>
-                )}
-              </div>
-
-              <div className="flex items-center gap-3 px-1">
-                <button onClick={() => handleLike(reply.id)}
-                  className={`flex items-center gap-1 text-[10px] font-semibold transition-colors ${reply.liked ? "text-[#6F3FB5]" : "text-gray-400 hover:text-[#6F3FB5]"}`}>
-                  <Heart size={11} fill={reply.liked ? "currentColor" : "none"} />
-                  {reply.likes > 0 && reply.likes}
-                </button>
-
-                {depth < 2 && (
-                  <button onClick={() => { setReplyingTo(replyingTo === reply.id ? null : reply.id); setReplyText(""); }}
-                    className="text-[10px] font-semibold text-gray-400 hover:text-[#6F3FB5] transition-colors">
-                    Balas
-                  </button>
-                )}
-
-                {reply.userId === CURRENT_USER_ID && (
-                  <>
-                    <button onClick={() => { setEditingId(reply.id); setEditText(reply.content); }}
-                      className="text-[10px] font-semibold text-gray-400 hover:text-blue-500 transition-colors flex items-center gap-0.5">
-                      <Pencil size={9} /> Edit
-                    </button>
-                    <button onClick={() => handleDelete(reply.id)}
-                      className="text-[10px] font-semibold text-gray-400 hover:text-red-500 transition-colors flex items-center gap-0.5">
-                      <Trash2 size={9} /> Hapus
-                    </button>
-                  </>
-                )}
-              </div>
-
-              {replyingTo === reply.id && (
-                <div className="flex gap-2 mt-2 ml-1">
-                  <textarea
-                    value={replyText}
-                    onChange={(e) => setReplyText(e.target.value)}
-                    placeholder={`Balas ${reply.userName}...`}
-                    rows={2}
-                    className="flex-1 text-xs px-3 py-2 border border-purple-200 rounded-xl resize-none focus:outline-none focus:border-[#6F3FB5] bg-white"
-                  />
-                  <button onClick={() => handleSubmitReply(reply.id)} disabled={!replyText.trim()}
-                    className="self-end p-2 bg-[#6F3FB5] text-white rounded-xl hover:bg-[#5c32a0] transition-colors disabled:opacity-50">
-                    <Send size={13} />
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Nested replies */}
-          {depth < 2 && (
-            <div className="mt-2">
-              <ReplyThread
-                postId={postId}
-                replies={allReplies}
-                parentReplyId={reply.id}
-                depth={depth + 1}
-                allReplies={allReplies}
-                onUpdate={onUpdate}
-              />
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ---- Post Detail View with Replies ----
+// ReplyThread DIHAPUS: balasan sekarang FLAT.
+//
+// Komponen ini menampilkan balasan berjenjang memakai
+// parentReplyId, yang tidak ada di model balasan backend
+// dan juga tidak diminta spec. Daftar balasan dirender
+// langsung di PostDetail.
 function PostDetail({
-  post, onClose, allReplies, onRepliesUpdate,
+  post, onClose, onReplied,
 }: {
   post: ForumPost;
   onClose: () => void;
-  allReplies: ForumReply[];
-  onRepliesUpdate: (r: ForumReply[]) => void;
+
+  // Dipanggil setelah balasan tersimpan, supaya jumlah
+  // komentar di feed ikut diperbarui.
+  onReplied: () => void;
 }) {
   const [newReply, setNewReply] = useState("");
 
-  const postReplies = allReplies.filter((r) => r.postId === post.id);
+  /*
+   * Balasan diambil dari backend, bukan localStorage.
+   *
+   * Identitas penulis balasan anonim juga sudah dibuang di
+   * server — frontend hanya menerima { name: "Anonymous
+   * User", anonymous: true }.
+   */
+  const [postReplies, setPostReplies] = useState<ApiReply[]>([]);
+  const [loadingReplies, setLoadingReplies] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [replyError, setReplyError] = useState("");
 
-  const handleSubmitReply = () => {
+  const loadReplies = useCallback(async () => {
+    try {
+      setLoadingReplies(true);
+
+      setPostReplies(await forumAPI.getReplies(post.id));
+    } catch {
+      setPostReplies([]);
+    } finally {
+      setLoadingReplies(false);
+    }
+  }, [post.id]);
+
+  useEffect(() => {
+    loadReplies();
+  }, [loadReplies]);
+
+  const handleSubmitReply = async () => {
     if (!newReply.trim()) return;
-    const r: ForumReply = {
-      id: `r${Date.now()}`,
-      postId: post.id,
-      parentReplyId: null,
-      userId: CURRENT_USER_ID,
-      userName: CURRENT_USER_NAME,
-      content: newReply.trim(),
-      likes: 0,
-      liked: false,
-      createdAt: new Date().toISOString(),
-      depth: 0,
-    };
-    onRepliesUpdate([...allReplies, r]);
-    setNewReply("");
+
+    try {
+      setSending(true);
+      setReplyError("");
+
+      await forumAPI.reply(post.id, newReply.trim());
+
+      setNewReply("");
+
+      await loadReplies();
+      onReplied();
+    } catch (err) {
+      // Mis. 403 karena user di-ban.
+      setReplyError(
+        err instanceof Error ? err.message : "Gagal mengirim balasan"
+      );
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -522,16 +350,61 @@ function PostDetail({
             </p>
           </div>
 
-          {/* Replies tree */}
-          {postReplies.filter((r) => r.parentReplyId === null).length > 0 ? (
-            <ReplyThread
-              postId={post.id}
-              replies={allReplies}
-              parentReplyId={null}
-              depth={0}
-              allReplies={allReplies}
-              onUpdate={onRepliesUpdate}
-            />
+          {/* ==========================================
+              DAFTAR BALASAN
+              ==========================================
+              Balasan bersifat FLAT (tidak bersarang).
+
+              UI lama punya thread berjenjang
+              (parentReplyId + depth), tapi model balasan di
+              backend tidak menyimpan induk — dan balasan
+              berjenjang juga tidak diminta spec. Kalau nanti
+              dibutuhkan, tambahkan parentReplyId di
+              ForumService lalu kembalikan tampilan thread.
+          ========================================== */}
+          {loadingReplies ? (
+            <div className="space-y-3">
+              {[0, 1].map((i) => (
+                <div key={i} className="flex gap-3 animate-pulse">
+                  <div className="w-8 h-8 rounded-full bg-purple-100 flex-shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3 bg-purple-100 rounded w-1/4" />
+                    <div className="h-3 bg-purple-50 rounded w-3/4" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : postReplies.length > 0 ? (
+            <div className="space-y-3">
+              {postReplies.map((r) => (
+                <div key={r.id} className="flex gap-3">
+                  <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
+                    <User size={14} className="text-gray-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-bold text-gray-800">
+                        {r.author.name}
+                      </span>
+                      {r.isOwn && (
+                        <span className="text-[10px] bg-[#F5EEFC] text-[#6F3FB5] px-1.5 py-0.5 rounded-full font-semibold">
+                          Kamu
+                        </span>
+                      )}
+                      <span className="text-xs text-gray-400">
+                        {new Date(r.createdAt).toLocaleDateString("id-ID", {
+                          day: "numeric",
+                          month: "short",
+                        })}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-600 leading-relaxed mt-0.5 whitespace-pre-wrap">
+                      {r.content}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : (
             <p className="text-xs text-gray-400 text-center py-4">Jadilah yang pertama membalas!</p>
           )}
@@ -564,12 +437,31 @@ function PostDetail({
 // ---- Main Page ----
 export default function ForumPage() {
   const [selectedCat, setSelectedCat] = useState("Semua");
-  const [posts, setPosts] = useState<ForumPost[]>(loadPosts);
-  const [replies, setReplies] = useState<ForumReply[]>(loadReplies);
+  const [posts, setPosts] = useState<ForumPost[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [detailPost, setDetailPost] = useState<ForumPost | null>(null);
   const [reportPost, setReportPost] = useState<ForumPost | null>(null);
-  const banned = isUserBanned();
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  /*
+   * Status ban datang dari BACKEND, bukan localStorage.
+   *
+   * Ini hanya untuk UI (menonaktifkan tombol + menjelaskan
+   * alasannya). Pengamannya tetap di backend: aksi forum
+   * dari user yang di-ban dibalas 403 apa pun yang
+   * dilakukan frontend.
+   */
+  const [ban, setBan] = useState<BanStatus>({
+    banned: false,
+    bannedUntil: null,
+    reason: null,
+  });
+
+  const banned = ban.banned;
+
   const [newPost, setNewPost] = useState({
     title: "",
     category: "Kecemasan",
@@ -580,52 +472,122 @@ export default function ForumPage() {
 
   const imageUpload = useImageUpload(5);
 
-  const visiblePosts = posts.filter((p) => {
-    if (p.archived) return false;
-    if (p.visibility === "private" && p.authorId !== CURRENT_USER_ID) return false;
-    if (selectedCat !== "Semua" && p.category !== selectedCat) return false;
-    return true;
-  });
+  // Penyaringan kategori dikerjakan BACKEND.
+  const visiblePosts = posts;
 
-  const updatePosts = (updated: ForumPost[]) => { setPosts(updated); savePosts(updated); };
-  const updateReplies = (updated: ForumReply[]) => { setReplies(updated); saveReplies(updated); };
+  const reload = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
 
-  const toggleLike = (id: string) => {
-    updatePosts(posts.map((p) => p.id === id ? { ...p, liked: !p.liked, likes: p.liked ? p.likes - 1 : p.likes + 1 } : p));
+      const [list, banStatus] = await Promise.all([
+        forumAPI.getPosts(selectedCat, { limit: 50 }),
+        forumAPI.getBanStatus().catch(() => ({
+          banned: false,
+          bannedUntil: null,
+          reason: null,
+        })),
+      ]);
+
+      setPosts(list);
+      setBan(banStatus);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Gagal mengambil postingan forum"
+      );
+      setPosts([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedCat]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  const toggleLike = async (id: string) => {
+    // Optimistis dulu supaya terasa responsif, lalu
+    // diselaraskan dengan jawaban server.
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.id === id
+          ? { ...p, liked: !p.liked, likes: p.liked ? p.likes - 1 : p.likes + 1 }
+          : p
+      )
+    );
+
+    try {
+      const result = await forumAPI.toggleLike(id);
+
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === id
+            ? { ...p, liked: result.liked, likes: result.likeCount }
+            : p
+        )
+      );
+    } catch (err) {
+      // Gagal (mis. 403 karena di-ban): balikkan dan beri tahu.
+      setError(
+        err instanceof Error ? err.message : "Gagal menyukai postingan"
+      );
+
+      await reload();
+    }
   };
 
-  const toggleSave = (id: string) => {
-    updatePosts(posts.map((p) => p.id === id ? { ...p, saved: !p.saved } : p));
+  const toggleSave = async (id: string) => {
+    setPosts((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, saved: !p.saved } : p))
+    );
+
+    try {
+      const result = await forumAPI.toggleSave(id);
+
+      setPosts((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, saved: result.saved } : p))
+      );
+    } catch {
+      await reload();
+    }
   };
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!newPost.title || !newPost.content) return;
-    const post: ForumPost = {
-      id: `f${Date.now()}`,
-      authorId: CURRENT_USER_ID,
-      author: newPost.isAnonymous ? "Anonymous User" : CURRENT_USER_NAME,
-      avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&auto=format",
-      category: newPost.category,
-      title: newPost.title,
-      content: newPost.content,
-      excerpt: newPost.content.slice(0, 150),
-      likes: 0,
-      comments: 0,
-      time: "Baru saja",
-      liked: false,
-      saved: false,
-      archived: false,
-      isAnonymous: newPost.isAnonymous,
-      visibility: newPost.visibility,
-      images: imageUpload.images.map((url) => ({ url })),
-    };
-    updatePosts([post, ...posts]);
-    setNewPost({ title: "", category: "Kecemasan", content: "", isAnonymous: false, visibility: "public" });
-    imageUpload.reset();
-    setShowCreate(false);
+
+    try {
+      setSaving(true);
+      setError("");
+
+      await forumAPI.createPost({
+        title: newPost.title,
+        category: newPost.category,
+        content: newPost.content,
+        isAnonymous: newPost.isAnonymous,
+
+        // Backend memvalidasi gambar (MIME, ukuran, magic
+        // bytes) lalu menyimpannya sebagai berkas.
+        image: imageUpload.images[0],
+      });
+
+      setNewPost({ title: "", category: "Kecemasan", content: "", isAnonymous: false, visibility: "public" });
+      imageUpload.reset();
+      setShowCreate(false);
+
+      await reload();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Gagal membuat postingan"
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const getReplyCount = (postId: string) => replies.filter((r) => r.postId === postId).length;
+  const getReplyCount = (postId: string) =>
+    posts.find((p) => p.id === postId)?.comments || 0;
 
   return (
     <div className="min-h-screen bg-[#FAF8FD]">
@@ -670,14 +632,38 @@ export default function ForumPage() {
 
         {/* Posts list */}
         <div className="space-y-3">
-          {visiblePosts.length === 0 && (
+          {error && (
+            <div className="bg-red-50 border border-red-100 text-red-600 text-sm rounded-2xl px-5 py-3 mb-4">
+              {error}
+            </div>
+          )}
+
+          {loading && (
+            <div className="space-y-4">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="bg-white rounded-2xl p-5 border border-purple-50 animate-pulse">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-9 h-9 rounded-full bg-purple-100" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-3 bg-purple-100 rounded w-1/3" />
+                      <div className="h-3 bg-purple-50 rounded w-1/5" />
+                    </div>
+                  </div>
+                  <div className="h-4 bg-purple-100 rounded w-2/3 mb-2" />
+                  <div className="h-3 bg-purple-50 rounded w-full" />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!loading && !error && visiblePosts.length === 0 && (
             <div className="text-center py-16 text-gray-400">
               <MessageCircle size={40} className="mx-auto mb-3 opacity-30" />
               <p className="font-semibold">Belum ada post</p>
             </div>
           )}
 
-          {visiblePosts.map((p) => {
+          {!loading && visiblePosts.map((p) => {
             const replyCount = getReplyCount(p.id);
             return (
               <div key={p.id} className="bg-white rounded-2xl p-5 border border-purple-50 hover:border-purple-200 hover:shadow-sm transition-all">
@@ -756,12 +742,27 @@ export default function ForumPage() {
         </div>
       </div>
 
-      {/* Banned notice */}
+      {/* Banned notice — alasan & masa berlaku dari backend */}
       {banned && (
         <div className="max-w-4xl mx-auto px-4 mb-4">
-          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center gap-3">
-            <Flag size={16} className="text-red-500 flex-shrink-0" />
-            <p className="text-sm text-red-700 font-medium">Akun Anda dibatasi. Beberapa fitur forum tidak tersedia.</p>
+          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-start gap-3">
+            <Flag size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm text-red-700 font-medium">
+                Akses forum dibatasi. Kamu masih bisa membaca, tapi
+                belum bisa membuat postingan, membalas, atau menyukai.
+              </p>
+              {ban.reason && (
+                <p className="text-xs text-red-600 mt-1">
+                  Alasan: {ban.reason}
+                </p>
+              )}
+              <p className="text-xs text-red-500 mt-0.5">
+                {ban.bannedUntil
+                  ? `Berlaku sampai ${new Date(ban.bannedUntil).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}`
+                  : "Pembatasan permanen"}
+              </p>
+            </div>
           </div>
         </div>
       )}
@@ -771,8 +772,7 @@ export default function ForumPage() {
         <PostDetail
           post={detailPost}
           onClose={() => setDetailPost(null)}
-          allReplies={replies}
-          onRepliesUpdate={updateReplies}
+          onReplied={reload}
         />
       )}
 
@@ -909,10 +909,10 @@ export default function ForumPage() {
 
               <button
                 onClick={handleCreate}
-                disabled={!newPost.title || !newPost.content}
+                disabled={saving || !newPost.title || !newPost.content}
                 className="w-full bg-[#6F3FB5] text-white font-semibold py-3 rounded-xl hover:bg-purple-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Publish Post
+                {saving ? "Memposting..." : "Publish Post"}
               </button>
             </div>
           </div>

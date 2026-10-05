@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react"
 import { useNavigate, useLocation, Link } from "react-router-dom"
 import { useAuth } from "../../contexts/AuthContext"
+import { verificationAPI } from "../../api/verification.api"
+import { forumAPI } from "../../api/forum.api"
+import { adminAPI } from "../../api/admin.api"
 import {
   LayoutDashboard,
   MessageSquareWarning,
@@ -159,6 +162,8 @@ export default function AdminDashboardPage() {
   const [session, setSession] = useState<AdminSession | null>(null)
   const [verifications, setVerifications] = useState<Verification[]>([])
   const [forumBans, setForumBans] = useState<ForumBan[]>([])
+  const [psychologistCount, setPsychologistCount] = useState(0)
+  const [statsLoading, setStatsLoading] = useState(true)
 
   useEffect(() => {
     setSession({
@@ -166,15 +171,71 @@ export default function AdminDashboardPage() {
       name: String(authUser?.name || "Admin HearMe"),
     })
 
-    const vRaw = localStorage.getItem("hearme_verifications")
-    if (vRaw) {
-      const parsed = JSON.parse(vRaw)
-      setVerifications(Array.isArray(parsed) ? parsed : [])
+    /*
+     * DATA DARI MONGODB.
+     *
+     * Dulu dashboard ini membaca localStorage
+     * "hearme_verifications" dan "hearme_forum_bans" —
+     * angkanya hanya mencerminkan browser admin itu sendiri.
+     *
+     * Statistik yang tidak punya endpoint khusus dihitung
+     * dari data yang memang tersedia, bukan ditulis sebagai
+     * angka tetap.
+     */
+    const load = async () => {
+      try {
+        const [subs, bans, psychologists] = await Promise.all([
+          verificationAPI.getAll().catch(() => []),
+          forumAPI.adminGetBans().catch(() => []),
+          adminAPI.listPsychologists().catch(() => []),
+        ])
+
+        setVerifications(
+          subs.map((s) => {
+            const p = (s as typeof s & {
+              psychologist?: { name?: string }
+            }).psychologist
+
+            return {
+              id: String(s._id),
+              psychologistId: String(s.psychologistId || ""),
+              psychologistName: p?.name || "Psikolog",
+              submittedAt: s.submittedAt,
+              status:
+                s.status === "pending"
+                  ? "pending"
+                  : s.status === "approved"
+                    ? "approved"
+                    : "rejected",
+            }
+          }),
+        )
+
+        setForumBans(
+          bans
+            .filter((b) => b.active)
+            .map((b) => ({
+              id: b.userId,
+              userId: b.userId,
+              userName: b.name,
+              reason: b.reason || "-",
+              duration: b.duration || "-",
+              bannedAt: String(b.bannedUntil || ""),
+              expiresAt: String(b.bannedUntil || ""),
+            })),
+        )
+
+        setPsychologistCount(psychologists.length)
+      } catch {
+        setVerifications([])
+        setForumBans([])
+      } finally {
+        setStatsLoading(false)
+      }
     }
 
-    const bRaw = localStorage.getItem("hearme_forum_bans")
-    if (bRaw) setForumBans(JSON.parse(bRaw))
-  }, [navigate])
+    load()
+  }, [authUser])
 
   const handleLogout = async () => {
     await doLogout()
@@ -183,40 +244,57 @@ export default function AdminDashboardPage() {
 
   if (!session) return null
 
+  /*
+   * Angka pada kartu statistik berasal dari data nyata.
+   *
+   * Sebelumnya tiga di antaranya adalah angka TETAP
+   * ("2,481" pengguna, "38" psikolog, "1,204" postingan)
+   * dengan label perubahan palsu ("+12%") — dashboard yang
+   * terlihat hidup padahal tidak mencerminkan apa pun.
+   *
+   * Yang belum punya endpoint hitungannya ditandai "—"
+   * daripada diisi angka karangan.
+   */
+  const pendingCount = verifications.filter(
+    (v) => v.status === "pending",
+  ).length
+
   const statCards = [
     {
-      label: "Total Pengguna",
-      value: "2,481",
+      label: "Psikolog Terverifikasi",
+      value: statsLoading
+        ? "…"
+        : String(
+            verifications.filter((v) => v.status === "approved").length,
+          ),
       icon: Users,
       color: "#6F3FB5",
       bg: "#F3ECF9",
-      change: "+12%",
+      change: "status approved",
     },
     {
       label: "Total Psikolog",
-      value: "38",
+      value: statsLoading ? "…" : String(psychologistCount),
       icon: Stethoscope,
       color: "#059669",
       bg: "#ECFDF5",
-      change: "+3",
+      change: "semua status",
     },
     {
       label: "Menunggu Verifikasi",
-      value:
-        verifications.filter((v) => v.status === "pending").length.toString() ||
-        "5",
+      value: statsLoading ? "…" : String(pendingCount),
       icon: ClipboardList,
       color: "#D97706",
       bg: "#FFFBEB",
-      change: "Perlu review",
+      change: pendingCount > 0 ? "Perlu review" : "Tidak ada",
     },
     {
-      label: "Postingan Forum",
-      value: "1,204",
+      label: "Pembatasan Forum Aktif",
+      value: statsLoading ? "…" : String(forumBans.length),
       icon: FileText,
       color: "#2563EB",
       bg: "#EFF6FF",
-      change: "+47 hari ini",
+      change: "sedang berlaku",
     },
   ]
 

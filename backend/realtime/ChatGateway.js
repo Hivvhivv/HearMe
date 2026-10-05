@@ -75,15 +75,18 @@ export class ChatGateway {
   // ATTACH
   // ====================================================
 
-  attach(httpServer, { allowedOrigins } = {}) {
+  /*
+   * `origin` memakai bentuk yang sama dengan cors(): daftar
+   * origin, atau boolean. Nilainya ditentukan satu kali di
+   * server.js (corsOrigin()) supaya HTTP dan realtime tidak
+   * pernah punya kebijakan yang berbeda.
+   */
+  attach(httpServer, { origin = false } = {}) {
     this.io = new SocketServer(httpServer, {
       path: "/socket.io",
 
       cors: {
-        origin:
-          allowedOrigins && allowedOrigins.length > 0
-            ? allowedOrigins
-            : true,
+        origin,
         credentials: true
       }
     });

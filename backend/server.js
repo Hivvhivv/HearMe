@@ -44,10 +44,40 @@ function allowedOrigins() {
 }
 
 
+/*
+ * Nilai `origin` untuk cors() dan Socket.IO.
+ *
+ * Aturannya sengaja berbeda antara dev dan production:
+ *
+ *   - ada daftar          -> pakai daftar itu
+ *   - kosong + dev        -> true (pantulkan origin apa pun)
+ *                            supaya akses dari IP LAN/HP
+ *                            tidak perlu konfigurasi
+ *   - kosong + production -> false, BUKAN true
+ *
+ * Kasus terakhir itu yang penting. Membiarkan default
+ * permisif di production sama dengan CORS terbuka, dan itu
+ * dilarang. Dan memang tidak dibutuhkan: frontend memanggil
+ * "/api" relatif, jadi request-nya same-origin — browser
+ * tidak meminta header CORS sama sekali. `false` hanya
+ * menutup pemanggilan dari origin LAIN.
+ */
+function corsOrigin() {
+  const origins = allowedOrigins();
+
+  if (origins.length > 0) {
+    return origins;
+  }
+
+  return process.env.NODE_ENV !== "production";
+}
+
+
 export class Server {
   constructor({ db = database } = {}) {
     this.database = db;
     this.app = express();
+    this.bootstrapped = null;
 
     this.configure();
     this.registerHealthCheck();
@@ -75,14 +105,12 @@ export class Server {
      *
      *   CORS_ORIGINS=http://localhost:8443,http://192.168.1.5:8443
      *
-     * Kalau tidak diisi, semua origin diizinkan (mode dev).
-     * Jangan dibiarkan kosong saat production.
+     * Kalau tidak diisi: di dev semua origin dipantulkan,
+     * di production justru DITUTUP. Lihat corsOrigin().
      */
-    const origins = allowedOrigins();
-
     this.app.use(
       cors({
-        origin: origins.length > 0 ? origins : true,
+        origin: corsOrigin(),
 
         // Wajib true: cookie refresh token httpOnly hanya
         // terkirim kalau kredensial diizinkan.
@@ -223,26 +251,54 @@ export class Server {
          * HTTP (JWT -> sid -> session belum di-revoke),
          * sehingga logout juga memutus koneksi realtime.
          */
-        chatGateway.attach(server, {
-          allowedOrigins: allowedOrigins()
-        });
+        chatGateway.attach(server, { origin: corsOrigin() });
 
-        // Peringatkan setelan berbahaya (JWT_SECRET default,
-        // CORS terbuka) supaya tidak lolos ke production.
-        Security.auditConfig();
-
-        this.database
-          .setupIndexes()
-          .catch((error) => {
-            console.error(
-              "MongoDB index setup failed (server tetap jalan):",
-              error?.message || error
-            );
-          });
+        this.bootstrap();
 
         resolve(server);
       });
     });
+  }
+
+
+  // ====================================================
+  // BOOTSTRAP
+  // ====================================================
+  //
+  // Audit konfigurasi + pembuatan index.
+  //
+  // Dipisah dari start() karena start() TIDAK dipanggil di
+  // production (Vercel memakai export default app). Dulu
+  // kedua hal ini ada di dalam start(), jadi di Vercel index
+  // MongoDB tidak pernah dibuat sama sekali -- database baru
+  // akan jalan tanpa unique index, dan proteksi seperti
+  // "satu mood per user per hari" ikut hilang.
+  //
+  // Tidak di-await: request pertama tidak perlu menunggu,
+  // dan ensureIndex() idempoten. Diberi penjaga supaya pada
+  // serverless hanya jalan sekali per instance.
+  //
+  // ====================================================
+
+  bootstrap() {
+    if (this.bootstrapped) {
+      return this.bootstrapped;
+    }
+
+    // Peringatkan setelan berbahaya (JWT_SECRET default,
+    // cookie tidak secure) supaya tidak lolos ke production.
+    Security.auditConfig();
+
+    this.bootstrapped = this.database
+      .setupIndexes()
+      .catch((error) => {
+        console.error(
+          "MongoDB index setup failed (server tetap jalan):",
+          error?.message || error
+        );
+      });
+
+    return this.bootstrapped;
   }
 }
 
@@ -270,4 +326,8 @@ export { server };
 
 if (process.env.NODE_ENV !== "production") {
   server.start();
+} else {
+  // Serverless: tidak ada listen(), tapi index dan audit
+  // konfigurasi tetap harus jalan sekali per cold start.
+  server.bootstrap();
 }

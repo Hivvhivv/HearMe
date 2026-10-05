@@ -1,4 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
+import { ShieldCheck } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import Logo from "./Logo";
 
@@ -9,7 +10,27 @@ export default function Footer() {
   // Pembacaan langsung tidak reaktif: status login
   // dipastikan ke backend secara asinkron, jadi nilainya
   // belum siap pada render pertama.
-  const { isAuthenticated: authed } = useAuth();
+  const { isAuthenticated: authed, role } = useAuth();
+
+  /*
+   * Pintasan admin.
+   *
+   * Kalau yang membuka memang admin, langsung ke dashboard.
+   * Kalau bukan, ke halaman login admin -- dan halaman itu
+   * sendiri sudah memindahkan admin yang sudah login ke
+   * dashboard, jadi tidak ada jalan buntu dari arah mana pun.
+   *
+   * Ini murni pintasan tampilan. Yang menentukan boleh atau
+   * tidaknya tetap AdminRoute (role dari /api/users/me) dan
+   * authorize("admin","super_admin") di backend. Jadi link
+   * ini terlihat oleh siapa saja tanpa membuka apa pun:
+   * menekannya sebagai non-admin hanya berujung di form
+   * login yang akan menolak.
+   */
+  const isAdmin = role === "admin" || role === "super_admin";
+
+  const adminTo = isAdmin ? "/admin/dashboard" : "/admin/login";
+  const adminLabel = isAdmin ? "Dashboard Admin" : "Login Admin";
 
   const featureLinks: { label: string; to: string }[] = [
     { label: "AI Listener", to: "/ai-listener" },
@@ -89,8 +110,23 @@ export default function Footer() {
           </div>
         </div>
 
-        <div className="mt-8 pt-6 border-t border-purple-50 text-center text-xs text-gray-400">
-          © 2025 HearMe. Semua hak dilindungi. Dibuat dengan ❤️ untuk kesehatan mental Indonesia.
+        <div className="mt-8 pt-6 border-t border-purple-50 flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-3">
+          <p className="text-xs text-gray-400 text-center sm:text-left">
+            © 2025 HearMe. Semua hak dilindungi. Dibuat dengan ❤️ untuk kesehatan mental Indonesia.
+          </p>
+
+          <Link
+            to={adminTo}
+            className="inline-flex items-center gap-1.5 text-xs text-gray-400 hover:text-[#6F3FB5] transition-colors shrink-0"
+            title={
+              isAdmin
+                ? "Buka dashboard admin"
+                : "Masuk sebagai admin HearMe"
+            }
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            {adminLabel}
+          </Link>
         </div>
       </div>
     </footer>

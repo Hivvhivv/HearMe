@@ -33,10 +33,24 @@ import { AppError } from "../core/AppError.js";
 import { Validator } from "../core/Validator.js";
 import { uploadService } from "./UploadService.js";
 
+/*
+ * Kategori mengikuti yang SUDAH ADA DI UI (spec section 16),
+ * bukan daftar baru.
+ *
+ * Lima pertama adalah pilihan di ForumPage dan juga kategori
+ * yang dipakai data seed di MongoDB. Sisanya diterima
+ * sebagai cadangan agar kategori lama tetap valid.
+ */
 const CATEGORIES = [
-  "Self Improvement",
-  "Kesehatan Mental",
+  // pilihan di ForumPage
+  "Kecemasan",
   "Hubungan",
+  "Studi",
+  "Pekerjaan",
+  "Self Improvement",
+
+  // diterima tapi tidak ditawarkan UI saat ini
+  "Kesehatan Mental",
   "Karir",
   "Keluarga",
   "Lainnya"

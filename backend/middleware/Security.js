@@ -165,8 +165,12 @@ export class Security {
 
     if (!process.env.CORS_ORIGINS) {
       warnings.push(
-        "CORS_ORIGINS kosong -> semua origin diizinkan. " +
-          "Aman untuk dev, TIDAK untuk production."
+        process.env.NODE_ENV === "production"
+          ? "CORS_ORIGINS kosong -> request cross-origin DITOLAK. " +
+              "Tidak masalah kalau frontend memanggil /api relatif " +
+              "(same-origin). Isi hanya kalau frontend ada di domain lain."
+          : "CORS_ORIGINS kosong -> semua origin dipantulkan. " +
+              "Aman untuk dev, dan di production otomatis ditutup."
       );
     }
 

@@ -4,25 +4,53 @@
 //
 // SATU sumber kebenaran untuk alamat backend.
 //
-// Sebelumnya "http://localhost:5000" di-hardcode di 8
-// tempat. Akibatnya device kedua (misal HP yang membuka
-// app lewat IP LAN) mengirim request ke "localhost"
-// milik HP itu sendiri -- bukan ke laptop -- sehingga
-// semua request gagal dengan "Failed to fetch".
+// DEFAULT-NYA RELATIF: "/api"
 //
-// Atur lewat .env di root project:
+// Itu keputusan penting, bukan kebetulan:
 //
-//   VITE_API_URL=http://192.168.1.5:5000/api
+//   - Dev: Vite dev server mem-proxy /api ke backend
+//     (lihat vite.config.ts). Jadi membuka app dari HP
+//     lewat IP LAN langsung jalan tanpa konfigurasi.
+//
+//     Sebelumnya nilainya "http://localhost:5000/api", dan
+//     "localhost" di HP berarti HP ITU SENDIRI -- itulah
+//     penyebab "failed to fetch" saat diakses dari device
+//     lain.
+//
+//   - Produksi (Vercel): vercel.json me-rewrite /api/* ke
+//     serverless function, jadi frontend dan API berada di
+//     SATU origin.
+//
+//   - Same-origin berarti tidak ada masalah CORS, dan
+//     cookie refresh token tidak bergantung pada setelan
+//     SameSite lintas domain.
+//
+// Isi VITE_API_URL HANYA kalau backend benar-benar berada
+// di host lain, misalnya:
+//
+//   VITE_API_URL=https://api.hearme.example.com/api
 //
 // ======================================================
 
-const RAW_BASE_URL =
-  import.meta.env.VITE_API_URL ||
-  "http://localhost:5000/api";
+const RAW_BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
 // Buang trailing slash supaya `${API_BASE_URL}/auth`
 // tidak pernah menghasilkan "//auth".
-export const API_BASE_URL = RAW_BASE_URL.replace(
-  /\/+$/,
-  ""
-);
+export const API_BASE_URL = RAW_BASE_URL.replace(/\/+$/, "");
+
+
+/*
+ * Origin untuk Socket.IO.
+ *
+ * Kalau API_BASE_URL relatif, socket memakai origin halaman
+ * saat ini. Kalau absolut, host-nya diambil dari situ.
+ */
+export function socketOrigin(): string {
+  if (!API_BASE_URL.startsWith("http")) {
+    return typeof window !== "undefined"
+      ? window.location.origin
+      : "";
+  }
+
+  return API_BASE_URL.replace(/\/api\/?$/, "");
+}

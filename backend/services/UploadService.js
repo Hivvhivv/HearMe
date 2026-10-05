@@ -238,12 +238,45 @@ export class UploadService {
 
     const dir = path.join(this.baseDir, safeFolder);
 
-    await fs.mkdir(dir, { recursive: true });
-
     const name =
       crypto.randomBytes(16).toString("hex") + rule.ext;
 
-    await fs.writeFile(path.join(dir, name), buffer);
+    try {
+      await fs.mkdir(dir, { recursive: true });
+
+      await fs.writeFile(path.join(dir, name), buffer);
+    } catch (error) {
+      /*
+       * PENTING UNTUK DEPLOY SERVERLESS (Vercel, Lambda):
+       *
+       * Filesystem di sana READ-ONLY kecuali /tmp, dan /tmp
+       * pun hilang setiap invocation — jadi menyimpan file
+       * di disk TIDAK bisa dipakai di produksi.
+       *
+       * Tanpa penanganan ini, user hanya melihat 500 tanpa
+       * penjelasan. Dengan ini pesannya langsung menunjuk
+       * penyebab dan solusinya.
+       */
+      if (
+        error?.code === "EROFS" ||
+        error?.code === "EACCES" ||
+        error?.code === "EPERM"
+      ) {
+        console.error(
+          `Upload gagal: ${this.baseDir} tidak bisa ditulis (${error.code}). ` +
+            "Di hosting serverless, gunakan object storage (S3/Cloudinary/" +
+            "Vercel Blob) dan ganti UploadService.persist()."
+        );
+
+        throw new AppError(
+          "Penyimpanan file belum tersedia di server ini.",
+          503,
+          "UPLOAD_STORAGE_UNAVAILABLE"
+        );
+      }
+
+      throw error;
+    }
 
     return `${this.publicPath}/${safeFolder}/${name}`;
   }

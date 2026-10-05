@@ -680,53 +680,15 @@ export const chatService = {
 
 };
 
-
 // ======================================================
-// CONSULTATION CHAT SERVICE
+// consultationChatService DIHAPUS
 // ======================================================
-
-export const consultationChatService = {
-
-  getMessages: (
-    consultationId: string
-  ) => {
-
-    const saved =
-      localStorage.getItem(
-        `hearme_chat_${consultationId}`
-      );
-
-
-    return saved
-      ? JSON.parse(saved)
-      : [];
-
-  },
-
-
-  saveMessage: (
-    consultationId: string,
-    msg: unknown
-  ) => {
-
-    const msgs =
-      consultationChatService
-        .getMessages(
-          consultationId
-        );
-
-
-    localStorage.setItem(
-
-      `hearme_chat_${consultationId}`,
-
-      JSON.stringify([
-        ...msgs,
-        msg,
-      ])
-
-    );
-
-  },
-
-};
+//
+// Service ini menyimpan pesan konsultasi di localStorage
+// (hearme_chat_<id>). Chat sekarang realtime lewat
+// Socket.IO dan tersimpan di MongoDB:
+//
+//   src/api/socket.ts  ->  consultation:join / :message
+//
+// Tidak ada halaman yang memakainya lagi.
+// ======================================================

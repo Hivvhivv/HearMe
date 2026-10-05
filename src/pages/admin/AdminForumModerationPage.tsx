@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
+import { forumAPI, type BanDuration } from "../../api/forum.api";
 import { Flag, Eye, Trash2, ShieldBan, X, CheckCircle, AlertTriangle, Image as ImageIcon } from "lucide-react";
 import AdminSidebar from "../../components/AdminSidebar";
 
@@ -28,6 +29,14 @@ interface ForumReport {
   postAuthor: string;
   postImages?: { url: string }[];
   reporterUserId: string;
+  reporterName?: string;
+
+  // userId pemilik post -- dipakai untuk ban.
+  // Backend mengirimnya bahkan untuk post anonim, karena
+  // moderasi butuh tahu pemiliknya (spec section 17).
+  ownerUserId?: string;
+  ownerBanned?: boolean;
+
   reason: string;
   description: string;
   status: "pending" | "reviewed" | "dismissed";
@@ -46,17 +55,19 @@ const BAN_OPTIONS: BanOption[] = [
   { label: "Permanent", days: null },
 ];
 
-function loadReports(): ForumReport[] {
-  try { return JSON.parse(localStorage.getItem("hearme_forum_reports") || "[]"); }
-  catch { return []; }
-}
-function saveReports(r: ForumReport[]) {
-  localStorage.setItem("hearme_forum_reports", JSON.stringify(r));
-}
+// loadReports / saveReports DIHAPUS: laporan sekarang
+// dari MongoDB lewat forumAPI.adminGetReports().
 
-function getPostCounts(): Record<string, number> {
-  const reports = loadReports();
-  return reports.reduce((acc, r) => { acc[r.postId] = (acc[r.postId] || 0) + 1; return acc; }, {} as Record<string, number>);
+// Jumlah laporan per post, dihitung dari data yang sudah
+// dimuat (bukan membaca ulang storage).
+function getPostCounts(reports: ForumReport[]): Record<string, number> {
+  return reports.reduce(
+    (acc, r) => {
+      acc[r.postId] = (acc[r.postId] || 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
 }
 
 function grouped(reports: ForumReport[]): ForumReport[] {
@@ -266,79 +277,147 @@ export default function AdminForumModerationPage() {
   const [deleteTarget, setDeleteTarget] = useState<ForumReport | null>(null);
   const [banTarget, setBanTarget] = useState<ForumReport | null>(null);
 
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  /*
+   * LAPORAN DARI MONGODB.
+   *
+   * Dulu halaman ini membaca localStorage
+   * "hearme_forum_reports" — laporan yang dikirim user
+   * TIDAK PERNAH sampai ke admin, karena keduanya menulis
+   * ke localStorage browser masing-masing.
+   *
+   * `ownerUserId` penting: backend mengirim pemilik post
+   * (bahkan untuk post anonim) supaya ban bisa menyasar
+   * akun yang benar.
+   */
+  const reload = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const list = await forumAPI.adminGetReports();
+
+      setReports(
+        list.map((r) => ({
+          id: r.id,
+          postId: r.post?.id || "",
+          postTitle: r.post?.title || "(post terhapus)",
+          postContent: r.post?.content || "",
+          postAuthor: r.post?.isAnonymous
+            ? `${r.owner?.name || "Pengguna"} (anonim)`
+            : r.owner?.name || "Pengguna",
+          postImages: r.post?.image ? [{ url: r.post.image }] : [],
+          reporterUserId: r.reporter?.id || "",
+          reporterName: r.reporter?.name || "Pengguna",
+          ownerUserId: r.owner?.id || "",
+          ownerBanned: Boolean(r.owner?.forumBan?.isBanned),
+          reason: r.reason,
+          description: r.description || "",
+          status:
+            r.status === "pending"
+              ? "pending"
+              : r.status === "rejected"
+                ? "dismissed"
+                : "reviewed",
+          createdAt: r.createdAt,
+          reviewedAt: r.reviewedAt || undefined,
+        }))
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Gagal mengambil laporan forum"
+      );
+      setReports([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     setSession({
       role: String(authUser?.role || "admin"),
       name: String(authUser?.name || "Admin HearMe"),
     });
-    setReports(loadReports());
-  }, [navigate]);
 
-  const persist = (updated: ForumReport[]) => {
-    setReports(updated);
-    saveReports(updated);
+    reload();
+  }, [authUser, reload]);
+
+  const runAction = async (action: () => Promise<void>) => {
+    try {
+      setBusy(true);
+      setError("");
+
+      await action();
+
+      setDetailReport(null);
+      setDeleteTarget(null);
+      setBanTarget(null);
+
+      await reload();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Aksi gagal"
+      );
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const handleDismiss = (postId: string) => {
-    // ======================================================
-    // ## DATABASE TEMPLATE IF CONNECTED ##
-    // TODO: UPDATE forum_reports SET status = 'dismissed', reviewed_at = NOW(), reviewed_by = admin_id WHERE post_id = ?
-    // ======================================================
-    const updated = reports.map((r) =>
-      r.postId === postId ? { ...r, status: "dismissed" as const, reviewedAt: new Date().toISOString(), reviewedBy: session?.name } : r
+  // Laporan ditolak; post dibiarkan.
+  const handleDismiss = (report: ForumReport) =>
+    runAction(() =>
+      forumAPI.adminReviewReport(report.id, "dismiss")
     );
-    persist(updated);
-    setDetailReport(null);
-  };
 
-  const handleDeletePost = (postId: string) => {
-    // ======================================================
-    // ## DATABASE TEMPLATE IF CONNECTED ##
-    // TODO: DELETE FROM forum_posts WHERE id = ?
-    // TODO: UPDATE forum_reports SET status = 'reviewed', reviewed_at = NOW() WHERE post_id = ?
-    // ======================================================
-    const posts: { id: string }[] = JSON.parse(localStorage.getItem("hearme_forum_v2") || "[]");
-    localStorage.setItem("hearme_forum_v2", JSON.stringify(posts.filter((p) => p.id !== postId)));
-    const updatedReports = reports.map((r) =>
-      r.postId === postId ? { ...r, status: "reviewed" as const, reviewedAt: new Date().toISOString(), reviewedBy: session?.name } : r
+  // Post di-soft delete; datanya tetap ada untuk audit.
+  const handleDeletePost = (report: ForumReport) =>
+    runAction(() =>
+      forumAPI.adminReviewReport(report.id, "delete", "Melanggar aturan komunitas")
     );
-    persist(updatedReports);
-    setDetailReport(null);
-    setDeleteTarget(null);
-  };
 
-  const handleBanUser = (report: ForumReport, days: number | null, reason: string) => {
-    // ======================================================
-    // ## DATABASE TEMPLATE IF CONNECTED ##
-    // TODO: INSERT INTO user_bans (user_id, reason, duration_days, expires_at, banned_by) VALUES (...)
-    // TODO: UPDATE forum_reports SET status = 'reviewed', reviewed_at = NOW() WHERE post_id = ?
-    // ======================================================
-    const bans = JSON.parse(localStorage.getItem("hearme_user_bans") || "[]");
-    const expiresAt = days ? new Date(Date.now() + days * 86400000).toISOString() : null;
-    bans.push({
-      userId: report.reporterUserId === "me" ? report.postAuthor : report.postAuthor,
-      authorName: report.postAuthor,
-      postId: report.postId,
-      reason,
-      durationDays: days,
-      bannedAt: new Date().toISOString(),
-      expiresAt,
-      bannedBy: session?.name || "Admin",
+  const handleBanUser = (
+    report: ForumReport,
+    days: number | null,
+    reason: string
+  ) => {
+    // Durasi dipetakan ke kunci yang dimengerti backend.
+    const duration: BanDuration =
+      days === null
+        ? "permanent"
+        : (`${days}d` as BanDuration);
+
+    return runAction(async () => {
+      if (!report.ownerUserId) {
+        throw new Error("Pemilik post tidak diketahui");
+      }
+
+      // Ban memakai userId pemilik post, bukan namanya.
+      // Versi lama memasukkan NAMA sebagai userId, jadi
+      // ban-nya tidak pernah cocok dengan akun siapa pun.
+      await forumAPI.adminBanUser(
+        report.ownerUserId,
+        duration,
+        reason
+      );
+
+      // Laporannya sekaligus ditutup.
+      await forumAPI.adminReviewReport(
+        report.id,
+        "delete",
+        reason
+      );
     });
-    localStorage.setItem("hearme_user_bans", JSON.stringify(bans));
-
-    const updatedReports = reports.map((r) =>
-      r.postId === report.postId ? { ...r, status: "reviewed" as const, reviewedAt: new Date().toISOString(), reviewedBy: session?.name } : r
-    );
-    persist(updatedReports);
-    setBanTarget(null);
-    setDetailReport(null);
   };
 
   if (!session) return null;
 
   const uniqueReports = grouped(reports);
-  const postCounts = getPostCounts();
+  const postCounts = getPostCounts(reports);
 
   const filtered = (filterStatus === "all" ? uniqueReports : uniqueReports.filter((r) => r.status === filterStatus))
     .sort((a, b) => (a.status === "pending" ? -1 : 1) || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -453,7 +532,7 @@ export default function AdminForumModerationPage() {
         <DetailPanel
           report={detailReport}
           allReports={reports}
-          onDismiss={() => handleDismiss(detailReport.postId)}
+          onDismiss={() => handleDismiss(detailReport)}
           onDelete={() => setDeleteTarget(detailReport)}
           onBan={() => setBanTarget(detailReport)}
           onClose={() => setDetailReport(null)}
@@ -464,7 +543,7 @@ export default function AdminForumModerationPage() {
       {deleteTarget && (
         <DeleteModal
           postTitle={deleteTarget.postTitle}
-          onConfirm={() => handleDeletePost(deleteTarget.postId)}
+          onConfirm={() => handleDeletePost(deleteTarget)}
           onCancel={() => setDeleteTarget(null)}
         />
       )}

@@ -28,7 +28,26 @@ import { uploadService } from "./UploadService.js";
 
 const MAX_IMAGES = 5;
 
+/*
+ * Daftar ini harus mencakup nilai yang DIKIRIM UI.
+ *
+ * JournalPage memakai: happy, sad, okay, anxious,
+ * grateful, angry. Padanan bahasa Indonesia ikut diterima
+ * supaya data lama / halaman lain tetap valid.
+ */
 const MOODS = [
+  // dipakai JournalPage
+  "happy",
+  "sad",
+  "okay",
+  "anxious",
+  "grateful",
+  "angry",
+
+  // varian lain yang diterima
+  "neutral",
+  "tired",
+  "confused",
   "senang",
   "sedih",
   "marah",
@@ -36,15 +55,7 @@ const MOODS = [
   "biasa",
   "lelah",
   "bersyukur",
-  "bingung",
-  "happy",
-  "sad",
-  "angry",
-  "anxious",
-  "neutral",
-  "tired",
-  "grateful",
-  "confused"
+  "bingung"
 ];
 
 

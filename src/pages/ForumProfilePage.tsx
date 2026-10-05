@@ -1,5 +1,7 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { forumAPI } from "../api/forum.api";
+import type { ForumPost as SharedForumPost } from "../types";
 import {
   Heart,
   MessageSquare,
@@ -14,20 +16,18 @@ import {
 } from "lucide-react";
 import DashboardNavbar from "@/components/DashboardNavbar";
 
-interface ForumPost {
-  id: string;
-  authorId: string;
-  title: string;
-  content: string;
-  category: string;
-  likes: number;
-  comments: number;
-  saved?: boolean;
-  archived?: boolean;
-  anonymous?: boolean;
-  isPublic?: boolean;
-  createdAt: string;
-}
+/*
+ * Tipe ForumPost diambil dari src/types (tipe bersama).
+ *
+ * Definisi lokal sebelumnya punya field berbeda
+ * (`anonymous`, `isPublic`, `createdAt`) yang tidak ada di
+ * tipe asli — duplikat seperti itu gampang melenceng dan
+ * sudah pernah menyebabkan error tipe di halaman lain.
+ *
+ * `createdAt` ditambahkan di sini karena dipakai
+ * getRelativeTime; backend mengirimnya lewat `time`.
+ */
+type ForumPost = SharedForumPost & { createdAt?: string };
 
 function getRelativeTime(dateStr: string): string {
   const now = Date.now();
@@ -64,17 +64,14 @@ function PostCard({
             <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${catColor}`}>
               {post.category}
             </span>
-            {post.anonymous && (
+            {post.isAnonymous && (
               <span className="text-xs text-gray-400 italic">(Anonim)</span>
             )}
-            <span
-              className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                post.isPublic === false
-                  ? "bg-gray-100 text-gray-500"
-                  : "bg-green-100 text-green-600"
-              }`}
-            >
-              {post.isPublic === false ? "Privat" : "Publik"}
+            {/* Semua post forum bersifat publik — backend
+                tidak punya mode privat. Badge disederhanakan
+                agar tidak menjanjikan fitur yang tidak ada. */}
+            <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-green-100 text-green-600">
+              Publik
             </span>
           </div>
           <h3
@@ -91,7 +88,9 @@ function PostCard({
               <MessageSquare size={12} /> {post.comments}
             </span>
             <span className="flex items-center gap-1">
-              <Clock size={12} /> {getRelativeTime(post.createdAt)}
+              {/* Backend sudah mengirim jarak waktu siap
+                  pakai pada field time. */}
+              <Clock size={12} /> {post.createdAt ? getRelativeTime(post.createdAt) : post.time}
             </span>
           </div>
         </div>
@@ -103,44 +102,93 @@ function PostCard({
 
 type Tab = "myPosts" | "saved" | "archived";
 
+// ======================================================
+// MY FORUM — DARI BACKEND + MONGODB
+// ======================================================
+//
+// Setiap tab adalah query terpisah ke backend:
+//
+//   posts    -> post milik sendiri yang aktif
+//   saved    -> post yang disimpan (bukan milik sendiri)
+//   archived -> post sendiri yang diarsipkan
+//
+// Archive / restore / delete diverifikasi kepemilikannya
+// di backend: post orang lain tidak akan pernah cocok,
+// jadi membalas 404. Tidak ada pengecekan "authorId ===
+// 'me'" di frontend yang bisa diakali.
+//
+// ======================================================
+
 export default function ForumProfilePage() {
   const navigate = useNavigate();
-  const [posts, setPosts] = useState<ForumPost[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>("myPosts");
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
-  useEffect(() => {
-    const raw = localStorage.getItem("hearme_forum_v2");
-    if (raw) {
-      try {
-        setPosts(JSON.parse(raw));
-      } catch {
-        setPosts([]);
-      }
+  const [myPosts, setMyPosts] = useState<ForumPost[]>([]);
+  const [savedPosts, setSavedPosts] = useState<ForumPost[]>([]);
+  const [archivedPosts, setArchivedPosts] = useState<ForumPost[]>([]);
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const reload = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const [mine, saved, archived] = await Promise.all([
+        forumAPI.getMyPosts(),
+        forumAPI.getSaved(),
+        forumAPI.getArchived(),
+      ]);
+
+      setMyPosts(mine);
+      setSavedPosts(saved);
+      setArchivedPosts(archived);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Gagal mengambil data forum"
+      );
+      setMyPosts([]);
+      setSavedPosts([]);
+      setArchivedPosts([]);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
-  const savePosts = (updated: ForumPost[]) => {
-    setPosts(updated);
-    localStorage.setItem("hearme_forum_v2", JSON.stringify(updated));
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  const runAction = async (action: () => Promise<void>) => {
+    try {
+      setError("");
+
+      await action();
+      await reload();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Aksi gagal"
+      );
+    }
   };
 
-  const archivePost = (id: string) => {
-    savePosts(posts.map((p) => (p.id === id ? { ...p, archived: true } : p)));
-  };
+  const archivePost = (id: string) =>
+    runAction(() => forumAPI.archivePost(id));
 
-  const restorePost = (id: string) => {
-    savePosts(posts.map((p) => (p.id === id ? { ...p, archived: false } : p)));
-  };
+  const restorePost = (id: string) =>
+    runAction(() => forumAPI.restorePost(id));
 
   const deletePost = (id: string) => {
-    savePosts(posts.filter((p) => p.id !== id));
     setDeleteConfirm(null);
-  };
 
-  const myPosts = posts.filter((p) => p.authorId === "me" && !p.archived);
-  const savedPosts = posts.filter((p) => p.saved);
-  const archivedPosts = posts.filter((p) => p.archived && p.authorId === "me");
+    // Soft delete di backend: data tetap tersimpan untuk
+    // keperluan moderasi dan audit.
+    return runAction(() => forumAPI.deletePost(id));
+  };
 
   const totalLikes = myPosts.reduce((sum, p) => sum + (p.likes || 0), 0);
 
@@ -260,7 +308,28 @@ export default function ForumProfilePage() {
         </div>
 
         {/* Posts list */}
-        {displayPosts.length === 0 ? (
+        {error && (
+          <div className="mb-4 bg-red-50 border border-red-100 text-red-600 text-sm rounded-2xl px-5 py-3">
+            {error}
+          </div>
+        )}
+
+        {loading ? (
+          <div className="space-y-3">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="bg-white rounded-2xl p-4 border border-purple-50 animate-pulse">
+                <div className="flex gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-purple-100" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3 bg-purple-50 rounded w-1/4" />
+                    <div className="h-4 bg-purple-100 rounded w-2/3" />
+                    <div className="h-3 bg-purple-50 rounded w-1/3" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : displayPosts.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <div className="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center mb-3">
               <FileText size={28} className="text-[#C9A9E9]" />
