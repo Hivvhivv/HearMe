@@ -101,9 +101,95 @@ export class Database {
       return {
         ok: false,
         message:
-          error?.message || "Database connection failed"
+          error?.message || "Database connection failed",
+        reason: Database.classify(error)
       };
     }
+  }
+
+
+  // ====================================================
+  // CLASSIFY
+  // ====================================================
+  //
+  // Menerjemahkan error driver menjadi SATU label dari
+  // daftar tetap, plus petunjuk perbaikan.
+  //
+  // Kenapa perlu: pesan mentah driver tidak boleh dikirim
+  // ke klien karena bisa memuat potongan connection string
+  // (URI dengan "@" yang tidak di-encode membuat errornya
+  // berbunyi "ENOTFOUND _mongodb._tcp.Nadi" -- "Nadi" di
+  // situ bagian dari PASSWORD).
+  //
+  // Tapi tanpa petunjuk apa pun, satu-satunya cara tahu
+  // penyebabnya adalah membuka log server. Label di bawah
+  // adalah jalan tengahnya: cukup untuk tahu HARUS
+  // memperbaiki apa, tanpa membocorkan nilai apa pun.
+  // Seluruh teksnya konstanta di berkas ini, tidak ada
+  // satu pun yang berasal dari error aslinya.
+  //
+  // ====================================================
+
+  static classify(error) {
+    const text = String(error?.message || "");
+    const code = error?.code;
+
+    if (/MONGODB_URI is not defined/i.test(text)) {
+      return {
+        code: "URI_MISSING",
+        hint: "Environment variable MONGODB_URI belum ada di server ini."
+      };
+    }
+
+    if (/querySrv|ENOTFOUND|getaddrinfo/i.test(text)) {
+      return {
+        code: "URI_MALFORMED",
+        hint:
+          "Host pada connection string tidak ditemukan. " +
+          "Penyebab tersering: karakter spesial pada password " +
+          "belum di-percent-encode (@ harus ditulis %40), atau " +
+          "tanda <> dari template Atlas ikut tersimpan."
+      };
+    }
+
+    if (
+      code === 8000 ||
+      code === 18 ||
+      /bad auth|authentication failed/i.test(text)
+    ) {
+      /*
+       * Host-nya sah (DNS berhasil), jadi yang salah ada di
+       * kredensial. Tanda <> dari template Atlas mendarat di
+       * sini, BUKAN di URI_MALFORMED: host tetap terbaca
+       * benar, hanya passwordnya jadi ikut membawa "<" dan
+       * ">" sebagai karakter.
+       */
+      return {
+        code: "AUTH_FAILED",
+        hint:
+          "Host benar, kredensial ditolak. Tiga penyebab tersering: " +
+          "tanda <> dari template Atlas ikut tersimpan, password " +
+          "belum di-percent-encode (@ harus %40), atau password di " +
+          "Atlas > Database Access memang sudah berbeda."
+      };
+    }
+
+    if (
+      /server selection|ETIMEDOUT|ECONNREFUSED|timed out/i.test(text)
+    ) {
+      return {
+        code: "NETWORK_BLOCKED",
+        hint:
+          "Tidak ada jawaban dari server database. Cek Atlas > " +
+          "Network Access: IP server harus diizinkan (0.0.0.0/0 " +
+          "untuk hosting serverless)."
+      };
+    }
+
+    return {
+      code: "UNKNOWN",
+      hint: "Penyebabnya hanya terbaca di log server."
+    };
   }
 
 

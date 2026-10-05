@@ -195,9 +195,16 @@ export class Server {
           ok: false,
           database: "hearme",
           code: "DATABASE_UNAVAILABLE",
-          message:
-            "Database tidak dapat dihubungi. " +
-            "Penyebabnya ada di log server."
+          message: "Database tidak dapat dihubungi.",
+
+          /*
+           * Label jenis kegagalan + petunjuk perbaikan.
+           * Keduanya konstanta dari Database.classify(),
+           * bukan potongan pesan error aslinya, jadi tidak
+           * ada nilai kredensial yang ikut.
+           */
+          reason: result.reason?.code || "UNKNOWN",
+          hint: result.reason?.hint
         });
       }
 
