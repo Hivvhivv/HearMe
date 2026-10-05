@@ -38,19 +38,47 @@ file bernama `api/auth/login` di antara file statis, tidak menemukannya,
 lalu mengembalikan HTML halaman 404. Browser menerima HTML padahal
 menunggu JSON, dan hasilnya `failed to fetch`.
 
-**Sudah diperbaiki.** `vercel.json` sekarang ada:
+**Sudah diperbaiki**, lewat dua hal.
+
+Pertama, berkas `api/[...path].js` di root. Vercel otomatis
+memperlakukan isi folder `/api` sebagai serverless function, dan nama
+`[...path]` berarti catch-all: semua `/api/*` masuk ke sana, termasuk
+`/api/auth/login` dan `/api/forums/123/replies`. Isinya cuma meneruskan
+Express app:
+
+```js
+import app from "../backend/server.js";
+export default app;
+```
+
+Karena konvensi itu sudah menangani `/api`, `vercel.json` tidak perlu
+rewrite untuk API — hanya untuk SPA:
 
 ```json
 "rewrites": [
-  { "source": "/api/(.*)",      "destination": "/backend/apiBackend/index.js" },
-  { "source": "/((?!api/).*)",  "destination": "/index.html" }
+  { "source": "/((?!api/).*)", "destination": "/index.html" }
 ]
 ```
 
-Baris pertama mengirim semua `/api/*` ke serverless function. Baris kedua
-mengirim sisanya ke `index.html` supaya refresh di halaman seperti
-`/forum` tidak 404 (kebutuhan SPA, terpisah dari masalah API, tapi akan
-menggigit kalau tidak ada).
+Itu mengirim selain `/api/*` ke `index.html`, supaya refresh di halaman
+seperti `/forum` tidak 404 (kebutuhan SPA, terpisah dari masalah API,
+tapi akan menggigit kalau tidak ada). Berkas statis tetap aman karena
+Vercel memeriksa filesystem lebih dulu sebelum menerapkan rewrite.
+
+Kedua, `installCommand` yang juga memasang dependensi backend:
+
+```json
+"installCommand": "npm install && npm install --prefix backend --omit=dev"
+```
+
+Tanpa baris itu build berhasil tapi function langsung mati saat
+dipanggil, karena `express` dan `mongodb` ada di `backend/package.json`
+sementara Vercel hanya memasang dependensi dari `package.json` root.
+
+> **Catatan:** jangan menulis `"runtime"` di dalam `functions`. Untuk
+> Node.js, Vercel mendeteksinya sendiri. Mengisinya dengan nilai seperti
+> `@vercel/node@3` membuat build gagal dengan pesan
+> *"Function Runtimes must have a valid version"*.
 
 ---
 

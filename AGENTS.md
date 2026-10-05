@@ -71,8 +71,10 @@ http/        CookieService
 server.js    perakitan app; start() hanya jalan di luar production
 ```
 
-`backend/apiBackend/index.js` adalah entry serverless untuk Vercel; ia
-hanya meneruskan `export default app` dari `server.js`.
+`api/[...path].js` di root adalah entry serverless untuk Vercel; ia hanya
+meneruskan `export default app` dari `backend/server.js`. Letaknya di
+`/api` karena itu konvensi Vercel, dan `[...path]` membuatnya menangkap
+seluruh `/api/*`.
 
 ## Aturan yang tidak boleh dilanggar
 
