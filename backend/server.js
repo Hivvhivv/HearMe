@@ -22,6 +22,7 @@
  */
 
 import path from "node:path";
+import { Readable } from "node:stream";
 
 import express from "express";
 import cors from "cors";
@@ -31,6 +32,7 @@ import { database } from "./core/Database.js";
 import { registerRoutes } from "./routes/index.js";
 import { Security } from "./middleware/Security.js";
 import { chatGateway } from "./realtime/ChatGateway.js";
+import { uploadService } from "./services/UploadService.js";
 
 dotenv.config();
 
@@ -143,6 +145,45 @@ export class Server {
     const uploadDir =
       process.env.UPLOAD_DIR ||
       path.join(process.cwd(), "uploads");
+
+    /*
+     * Mode Vercel Blob: berkasnya ada di store private,
+     * jadi di-stream lewat sini. Kalau tidak ketemu (atau
+     * mode disk), lanjut ke express.static di bawah --
+     * berkas lama di disk lokal tetap tersaji.
+     *
+     * Tanpa authenticate, sama seperti static file: <img>
+     * tidak bisa mengirim header Authorization. Pelindungnya
+     * nama berkas acak 128-bit yang tidak bisa ditebak.
+     */
+    this.app.get("/uploads/*pathname", async (req, res, next) => {
+      try {
+        const file = await uploadService.read(
+          [].concat(req.params.pathname).join("/")
+        );
+
+        if (!file) {
+          return next();
+        }
+
+        res.set({
+          "Content-Type": file.contentType,
+          "Content-Length": String(file.size),
+          // Nama berkas acak dan isinya tidak pernah berubah.
+          "Cache-Control": "private, max-age=31536000, immutable",
+          "X-Content-Type-Options": "nosniff"
+        });
+
+        return Readable.fromWeb(file.stream).pipe(res);
+      } catch (error) {
+        console.error(
+          "Gagal membaca berkas dari Blob:",
+          error?.message || error
+        );
+
+        return next();
+      }
+    });
 
     this.app.use(
       "/uploads",

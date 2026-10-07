@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Bell, ChevronDown, User, Settings, LogOut, Menu, X, Phone } from "lucide-react";
 import Logo from "./Logo";
+import UserAvatar from "./UserAvatar";
 import { useAuth } from "../contexts/AuthContext";
 
 const navLinks = [
@@ -77,9 +78,7 @@ export default function DashboardNavbar() {
               onClick={() => setDropdownOpen(!dropdownOpen)}
               className="flex items-center gap-2 px-3 py-1.5 rounded-xl hover:bg-[#F5EEFC] transition-colors"
             >
-              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#C9A9E9] to-[#6F3FB5] flex items-center justify-center text-white text-xs font-bold">
-                {name[0]?.toUpperCase()}
-              </div>
+              <UserAvatar src={user?.avatar as string | undefined} name={name} className="w-7 h-7 text-xs" />
               <span className="text-sm font-semibold text-gray-700">{name}</span>
               <ChevronDown size={14} className="text-gray-400" />
             </button>

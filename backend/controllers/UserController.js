@@ -37,6 +37,16 @@ export class UserController extends BaseController {
     return this.ok(res, { user });
   }
 
+  // PUT /api/users/me/avatar
+  async updateAvatar(req, res) {
+    const user = await this.users.updateAvatar(
+      req.user.sub,
+      req.body || {}
+    );
+
+    return this.ok(res, { user });
+  }
+
   // PATCH /api/users/me/password
   async changePassword(req, res) {
     const { currentPassword, newPassword } = req.body || {};

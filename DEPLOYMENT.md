@@ -246,38 +246,46 @@ Filesystem serverless Vercel bersifat read-only kecuali `/tmp`, dan
 `/tmp` pun hilang setiap function mati. Kode upload menulis ke
 `process.cwd()/uploads`, jadi di Vercel pasti gagal.
 
-**Sudah ditangani sebagian.** Errornya sekarang ditangkap dan diubah
-menjadi pesan yang jelas:
+**Sudah ditangani dengan Vercel Blob.** Kalau environment variable
+`BLOB_READ_WRITE_TOKEN` ada, `UploadService` menyimpan berkas ke Vercel
+Blob (store private), bukan ke disk. Berlaku untuk semua upload: avatar,
+forum, jurnal, dan Mind Hub.
+
+Yang perlu disiapkan di Vercel:
+
+1. Storage -> Create -> Blob, lalu hubungkan store-nya ke project ini.
+   `BLOB_READ_WRITE_TOKEN` otomatis masuk ke Environment Variables.
+2. Redeploy.
+
+Database tetap hanya menyimpan URL `/uploads/<folder>/<nama>`, sama seperti
+mode disk. Karena store-nya private, berkas tidak punya URL publik:
+backend yang men-stream-nya, dan `vercel.json` me-rewrite `/uploads/*` ke
+serverless function.
+
+Tanpa token itu, upload di Vercel membalas:
 
 ```
 503 UPLOAD_STORAGE_UNAVAILABLE
 "Penyimpanan file belum tersedia di server ini."
 ```
 
-Jadi tidak lagi berupa crash 500 yang membingungkan. Tapi ini penanganan
-error, **bukan** solusi: upload tetap tidak berfungsi di Vercel. Solusi
-sebenarnya adalah object storage (Vercel Blob, Cloudinary, atau S3) dan
-mengganti isi `UploadService.persist()`. Database tetap hanya menyimpan
-URL-nya dan tidak pernah binary-nya, jadi perubahan itu terbatas di satu
-method saja.
+Berkas yang dulu diunggah ke disk lokal tidak ikut pindah ke Blob.
 
 ---
 
 ## Yang tidak bisa jalan di Vercel
 
-Dua hal, dan keduanya bukan bug yang bisa diperbaiki dengan kode.
+Satu hal, dan ini bukan bug yang bisa diperbaiki dengan kode.
 
-**1. Chat konsultasi realtime (Socket.IO).** WebSocket butuh proses yang
+**Chat konsultasi realtime (Socket.IO).** WebSocket butuh proses yang
 hidup terus dan menyimpan koneksi di memori. Serverless function mati
 setelah tiap request. Backend tidak akan crash, karena
 `chatGateway.attach()` hanya dipanggil dari `start()` dan `start()`
 dilewati saat production, tapi chat realtime tidak akan berfungsi.
 
-**2. Upload file.** Lihat Penyebab 5.
-
 Fitur lain, yaitu login, sesi multi-device, mood harian, jurnal, forum,
 moderasi, booking, Mind Hub, dan profil, semuanya HTTP biasa dan jalan
-normal di Vercel.
+normal di Vercel. Upload berkas jalan lewat Vercel Blob (lihat Penyebab 5).
 
 ### Kalau kamu butuh chat realtime jalan
 

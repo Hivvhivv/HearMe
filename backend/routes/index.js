@@ -81,6 +81,7 @@ export function userRoutes() {
 
   r.get("/me", authenticate, c.handle(c.getMe));
   r.patch("/me", authenticate, c.handle(c.updateMe));
+  r.put("/me/avatar", authenticate, Security.upload(), c.handle(c.updateAvatar));
   r.patch("/me/password", authenticate, c.handle(c.changePassword));
 
   r.patch(

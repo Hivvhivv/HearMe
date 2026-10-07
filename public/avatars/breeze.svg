@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="breeze">
+<rect width="256" height="256" fill="#DDF5F0"/>
+<circle cx="128" cy="300" r="104" fill="#6FCDB8" opacity=".55"/>
+<circle cx="128" cy="122" r="66" fill="#6FCDB8"/>
+
+<circle cx="88" cy="134" r="10" fill="#fff" opacity=".45"/><circle cx="168" cy="134" r="10" fill="#fff" opacity=".45"/>
+<circle cx="100" cy="112" r="7" fill="#1F6655"/><path d="M146 114q10-9 20 0" stroke="#1F6655" stroke-width="6" stroke-linecap="round" fill="none"/>
+<path d="M108 140q20 18 40 0" stroke="#1F6655" stroke-width="6" stroke-linecap="round" fill="none"/>
+</svg>

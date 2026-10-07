@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="spark">
+<rect width="256" height="256" fill="#FFE5DC"/>
+<circle cx="128" cy="300" r="104" fill="#FF9F80" opacity=".55"/>
+<circle cx="128" cy="122" r="66" fill="#FF9F80"/>
+
+<circle cx="88" cy="134" r="10" fill="#fff" opacity=".45"/><circle cx="168" cy="134" r="10" fill="#fff" opacity=".45"/>
+<circle cx="100" cy="110" r="8" fill="#8A3418"/><circle cx="156" cy="110" r="8" fill="#8A3418"/><circle cx="103" cy="107" r="2.5" fill="#fff"/><circle cx="159" cy="107" r="2.5" fill="#fff"/>
+<path d="M104 140q24 26 48 0z" fill="#8A3418"/>
+</svg>

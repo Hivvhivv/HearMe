@@ -4,6 +4,7 @@ import { Eye, EyeOff, Mail, Lock } from "lucide-react";
 import PublicNavbar from "../components/PublicNavbar";
 import Logo from "../components/Logo";
 import { useAuth } from "../contexts/AuthContext";
+import { needsWelcome } from "../lib/avatars";
 
 export default function SignInPage() {
   const [email, setEmail] = useState("");
@@ -100,7 +101,11 @@ export default function SignInPage() {
       } else if (loggedIn.role === "admin") {
         navigate("/admin/dashboard", { replace: true });
       } else {
-        navigate("/dashboard", { replace: true });
+        // Akun yang belum memilih avatar dikenalkan dulu ke
+        // HearMe dan diminta mengatur profilnya.
+        navigate(needsWelcome(loggedIn) ? "/welcome" : "/dashboard", {
+          replace: true,
+        });
       }
 
     } catch (error) {

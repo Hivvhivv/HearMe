@@ -17,6 +17,7 @@ import { ObjectId } from "mongodb";
 import { BaseService } from "../core/BaseService.js";
 import { AppError } from "../core/AppError.js";
 import { Validator } from "../core/Validator.js";
+import { uploadService } from "./UploadService.js";
 
 const BCRYPT_ROUNDS = 12;
 
@@ -50,6 +51,33 @@ const GENDERS = [
   "lainnya"
 ];
 
+/*
+ * Avatar bawaan. File SVG-nya ada di public/avatars/ milik
+ * frontend, jadi tetap tersedia di Vercel tanpa storage.
+ *
+ * Klien hanya mengirim ID; URL dibentuk di server dari
+ * daftar ini, sehingga klien tidak bisa menyimpan URL
+ * sembarang sebagai avatar.
+ */
+const AVATAR_PRESETS = [
+  "sunny",
+  "calm",
+  "bloom",
+  "breeze",
+  "cozy",
+  "dreamy",
+  "spark",
+  "leafy"
+];
+
+// Upload avatar hanya gambar -- PDF yang diizinkan
+// UploadService untuk keperluan lain ditolak di sini.
+const AVATAR_IMAGE_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp"
+];
+
 // Field profesional psikolog (collection `psychologists`).
 const PSYCHOLOGIST_FIELDS = [
   "specialization",
@@ -61,6 +89,11 @@ const PSYCHOLOGIST_FIELDS = [
 
 
 export class UserService extends BaseService {
+  constructor(db, uploads = uploadService) {
+    super(db);
+
+    this.uploads = uploads;
+  }
 
   async users() {
     return this.collection("users");
@@ -84,6 +117,7 @@ export class UserService extends BaseService {
       gender: user.gender || "",
       birthDate: user.birthDate || "",
       phoneNumber: user.phoneNumber || "",
+      avatar: user.avatar || "",
       role: user.role,
       verificationStatus: user.verificationStatus,
       isActive: user.isActive !== false,
@@ -108,6 +142,7 @@ export class UserService extends BaseService {
       gender: user.gender,
       birthDate: user.birthDate,
       phoneNumber: user.phoneNumber,
+      avatar: user.avatar || "",
       role: user.role,
       verificationStatus: user.verificationStatus
     };
@@ -222,11 +257,29 @@ export class UserService extends BaseService {
           "MISSING_PSYCHOLOGIST_FIELDS"
         );
       }
-
-      Validator.dateString(birthDate, "Birth date", {
-        required: true
-      });
     }
+
+    // Data diri disimpan untuk SEMUA role. Dulu hanya untuk
+    // psikolog, jadi isian form sign up user biasa dibuang
+    // dan profilnya tampil "-". Validatornya sama dengan
+    // updateProfile().
+    const personal = Validator.pickDefined({
+      gender: Validator.oneOf(
+        input.gender === "" ? undefined : input.gender,
+        "Jenis kelamin",
+        GENDERS
+      ),
+
+      birthDate: Validator.dateString(
+        birthDate,
+        "Tanggal lahir"
+      ),
+
+      phoneNumber: Validator.phone(
+        phoneNumber,
+        "Nomor telepon"
+      )
+    });
 
     if (await this.findByEmail(email)) {
       throw AppError.conflict(
@@ -257,13 +310,7 @@ export class UserService extends BaseService {
           ? "unverified"
           : "not_required",
 
-      ...(role === "psychologist"
-        ? {
-            gender: input.gender,
-            birthDate,
-            phoneNumber
-          }
-        : {}),
+      ...personal,
 
       isActive: true,
       createdAt: now,
@@ -424,6 +471,94 @@ export class UserService extends BaseService {
         : null;
 
     return UserService.toPublic(user, profile);
+  }
+
+
+  // ====================================================
+  // AVATAR
+  // ====================================================
+  //
+  // Dua sumber, salah satu:
+  //
+  //   { preset: "sunny" }          -> avatar bawaan
+  //   { image: "data:image/..." }  -> upload sendiri
+  //
+  // Upload lewat UploadService (cek magic byte, nama
+  // acak); MongoDB hanya menyimpan URL-nya. Berkas upload
+  // lama dihapus setelah avatar baru tersimpan.
+  //
+  // ====================================================
+
+  async updateAvatar(userId, body) {
+    const { preset, image } = body || {};
+
+    let avatar;
+
+    if (preset !== undefined && preset !== null && preset !== "") {
+      const id = Validator.oneOf(
+        preset,
+        "Avatar",
+        AVATAR_PRESETS,
+        { required: true }
+      );
+
+      avatar = `/avatars/${id}.svg`;
+    } else if (typeof image === "string" && image) {
+      const claimed = /^data:([^;]+);/i
+        .exec(image)?.[1]
+        ?.toLowerCase();
+
+      if (!AVATAR_IMAGE_TYPES.includes(claimed)) {
+        throw AppError.badRequest(
+          "Foto profil harus JPG, PNG, atau WEBP",
+          "AVATAR_TYPE_NOT_ALLOWED"
+        );
+      }
+
+      const saved = await this.uploads.saveDataUrl(image, {
+        folder: "avatars"
+      });
+
+      avatar = saved.url;
+    } else {
+      throw AppError.badRequest(
+        "Pilih avatar atau unggah foto",
+        "AVATAR_REQUIRED"
+      );
+    }
+
+    const users = await this.users();
+
+    const _id = new ObjectId(userId);
+
+    const before = await users.findOneAndUpdate(
+      { _id },
+      { $set: { avatar, updatedAt: BaseService.now() } },
+      {
+        returnDocument: "before",
+        projection: { avatar: 1 }
+      }
+    );
+
+    const previous = BaseService.unwrap(before);
+
+    if (!previous) {
+      // User tidak ada: jangan tinggalkan berkas yatim.
+      await this.uploads.remove(avatar);
+
+      throw AppError.notFound(
+        "User tidak ditemukan",
+        "USER_NOT_FOUND"
+      );
+    }
+
+    if (previous.avatar && previous.avatar !== avatar) {
+      // remove() hanya menyentuh berkas di /uploads, jadi
+      // avatar preset lama aman diabaikan.
+      await this.uploads.remove(previous.avatar);
+    }
+
+    return this.getProfile(userId);
   }
 
 

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="bloom">
+<rect width="256" height="256" fill="#FCE4F1"/>
+<circle cx="128" cy="300" r="104" fill="#F29AC4" opacity=".55"/>
+<circle cx="128" cy="122" r="66" fill="#F29AC4"/>
+<g transform="translate(176 62)"><circle r="9" cx="0" cy="-11" fill="#fff"/><circle r="9" cx="11" cy="0" fill="#fff"/><circle r="9" cx="0" cy="11" fill="#fff"/><circle r="9" cx="-11" cy="0" fill="#fff"/><circle r="7" fill="#F29AC4"/></g>
+<circle cx="88" cy="134" r="10" fill="#fff" opacity=".45"/><circle cx="168" cy="134" r="10" fill="#fff" opacity=".45"/>
+<circle cx="100" cy="112" r="7" fill="#8C2F5E"/><circle cx="156" cy="112" r="7" fill="#8C2F5E"/>
+<path d="M108 140q20 18 40 0" stroke="#8C2F5E" stroke-width="6" stroke-linecap="round" fill="none"/>
+</svg>

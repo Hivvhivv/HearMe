@@ -17,7 +17,11 @@
       "destination": "/api"
     },
     {
-      "source": "/((?!api/).*)",
+      "source": "/uploads/(.*)",
+      "destination": "/api"
+    },
+    {
+      "source": "/((?!api/|uploads/).*)",
       "destination": "/index.html"
     }
   ]

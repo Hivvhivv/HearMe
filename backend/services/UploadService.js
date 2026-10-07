@@ -30,9 +30,20 @@
  *   4. nama file TIDAK dipakai sebagai path; nama baru
  *      dibuat dari id acak
  *
- * Kelas ini juga sengaja dibuat sebagai abstraksi: kalau
- * nanti pindah ke S3/Cloudinary, hanya `persist()` yang
- * perlu diganti.
+ * DUA TEMPAT PENYIMPANAN, satu bentuk URL:
+ *
+ *   - BLOB_READ_WRITE_TOKEN ada  -> Vercel Blob (private)
+ *   - tidak ada                  -> disk lokal (uploads/)
+ *
+ * Di kedua mode, URL yang disimpan di MongoDB tetap
+ * "/uploads/<folder>/<nama>". Store Blob-nya private, jadi
+ * berkas tidak punya URL publik sendiri: server.js
+ * menyajikannya lewat `read()` di path yang sama. Karena
+ * itu frontend dan data lama tidak perlu tahu berkasnya
+ * ada di mana.
+ *
+ * Blob dibutuhkan di Vercel: filesystem serverless
+ * read-only, jadi mode disk tidak bisa dipakai di sana.
  *
  * ======================================================
  */
@@ -40,6 +51,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+
+import { put, get, del } from "@vercel/blob";
 
 import { AppError } from "../core/AppError.js";
 
@@ -92,6 +105,13 @@ export class UploadService {
   } = {}) {
     this.baseDir = baseDir;
     this.publicPath = publicPath;
+  }
+
+
+  // Dibaca saat dipanggil, bukan saat modul dimuat:
+  // dotenv.config() di server.js jalan SETELAH import ini.
+  get useBlob() {
+    return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
   }
 
 
@@ -216,7 +236,7 @@ export class UploadService {
       );
     }
 
-    return rule;
+    return { ...rule, type: claimedType };
   }
 
 
@@ -240,6 +260,31 @@ export class UploadService {
 
     const name =
       crypto.randomBytes(16).toString("hex") + rule.ext;
+
+    if (this.useBlob) {
+      try {
+        await put(`${safeFolder}/${name}`, buffer, {
+          access: "private",
+          contentType: rule.type,
+          // Nama sudah acak; tanpa suffix supaya pathname
+          // di Blob persis sama dengan URL yang disimpan.
+          addRandomSuffix: false
+        });
+      } catch (error) {
+        console.error(
+          "Upload ke Vercel Blob gagal:",
+          error?.message || error
+        );
+
+        throw new AppError(
+          "Penyimpanan file sedang tidak tersedia.",
+          503,
+          "UPLOAD_STORAGE_UNAVAILABLE"
+        );
+      }
+
+      return `${this.publicPath}/${safeFolder}/${name}`;
+    }
 
     try {
       await fs.mkdir(dir, { recursive: true });
@@ -365,6 +410,19 @@ export class UploadService {
 
     const relative = url.slice(this.publicPath.length + 1);
 
+    if (this.useBlob) {
+      if (!UploadService.isSafePathname(relative)) {
+        return false;
+      }
+
+      try {
+        await del(relative);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
     const target = path.resolve(this.baseDir, relative);
 
     if (!target.startsWith(path.resolve(this.baseDir))) {
@@ -377,6 +435,47 @@ export class UploadService {
     } catch {
       return false;
     }
+  }
+
+
+  /*
+   * Hanya "<folder>/<32 hex>.<ext>" -- persis bentuk yang
+   * dibuat persist(). Mencegah path buatan klien dipakai
+   * membaca atau menghapus blob lain di store.
+   */
+  static isSafePathname(pathname) {
+    return /^[a-z0-9_-]+\/[a-f0-9]{32}\.(jpg|png|webp|gif|pdf)$/.test(
+      pathname
+    );
+  }
+
+
+  /*
+   * Baca berkas dari Blob untuk disajikan di /uploads.
+   *
+   * Mengembalikan null kalau mode disk, path tidak sah,
+   * atau berkasnya tidak ada -- pemanggil lalu meneruskan
+   * ke express.static.
+   */
+  async read(pathname) {
+    if (
+      !this.useBlob ||
+      !UploadService.isSafePathname(pathname)
+    ) {
+      return null;
+    }
+
+    const result = await get(pathname, { access: "private" });
+
+    if (!result || !result.stream) {
+      return null;
+    }
+
+    return {
+      stream: result.stream,
+      contentType: result.blob.contentType,
+      size: result.blob.size
+    };
   }
 }
 

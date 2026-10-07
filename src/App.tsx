@@ -7,6 +7,7 @@ import SignInPage from "./pages/SignInPage";
 import ChooseRolePage from "./pages/ChooseRolePage";
 import SignUpPage from "./pages/SignUpPage";
 import DashboardPage from "./pages/DashboardPage";
+import WelcomePage from "./pages/WelcomePage";
 import PsychologistsPage from "./pages/PsychologistsPage";
 import PsychologistDetailPage from "./pages/PsychologistDetailPage";
 import BookingPage from "./pages/BookingPage";
@@ -196,6 +197,7 @@ export default function App() {
         <Route path="/terms" element={<TermsPage />} />
 
         {/* User-only dashboard (redirects psychologist to their dashboard) */}
+        <Route path="/welcome" element={<UserRoute><WelcomePage /></UserRoute>} />
         <Route path="/dashboard" element={<UserRoute><DashboardPage /></UserRoute>} />
         <Route path="/psychologists" element={<UserRoute><PsychologistsPage /></UserRoute>} />
         <Route path="/psychologists/:id" element={<UserRoute><PsychologistDetailPage /></UserRoute>} />

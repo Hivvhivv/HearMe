@@ -15,6 +15,7 @@
 
 import { api } from "./client";
 import { saveUser } from "../lib/authStorage";
+import type { AvatarChoice } from "../lib/avatars";
 
 export type PsychologistProfile = {
   specialization?: string;
@@ -36,6 +37,7 @@ export type ProfileUser = {
   gender: string;
   birthDate: string;
   phoneNumber: string;
+  avatar?: string;
   role: string;
   verificationStatus?: string;
   isActive: boolean;
@@ -91,6 +93,29 @@ export const userAPI = {
     const res = await api.patch<Envelope<{ user: ProfileUser }>>(
       "/users/me",
       update
+    );
+
+    saveUser(res.data.user as unknown as Record<string, unknown>);
+
+    return res.data.user;
+  },
+
+
+  // ====================================================
+  // GANTI AVATAR
+  // ====================================================
+  //
+  // { preset: "sunny" } untuk avatar bawaan, atau
+  // { image: dataUrl } untuk foto yang diunggah.
+  //
+  // ====================================================
+
+  updateAvatar: async (
+    choice: AvatarChoice
+  ): Promise<ProfileUser> => {
+    const res = await api.put<Envelope<{ user: ProfileUser }>>(
+      "/users/me/avatar",
+      choice
     );
 
     saveUser(res.data.user as unknown as Record<string, unknown>);

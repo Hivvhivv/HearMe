@@ -120,6 +120,11 @@ pun komponen — ikuti gaya yang sudah ada di berkas yang sedang diubah.
 ## Deployment
 
 Lihat `DEPLOYMENT.md`. Ringkasnya: `vercel.json` me-rewrite `/api/*` ke
-serverless function dan sisanya ke `index.html`. Dua hal tidak bisa jalan
-di Vercel — chat realtime (serverless tidak menahan WebSocket) dan upload
-berkas (filesystem read-only).
+serverless function dan sisanya ke `index.html`. Chat realtime tidak bisa
+jalan di Vercel (serverless tidak menahan WebSocket).
+
+Upload berkas di Vercel memakai Vercel Blob (store private): kalau
+`BLOB_READ_WRITE_TOKEN` ada, `UploadService` menyimpan ke Blob; kalau
+tidak, ke disk `backend/uploads/`. URL di MongoDB tetap `/uploads/...` di
+kedua mode, dan backend yang men-stream berkasnya — `vercel.json`
+me-rewrite `/uploads/*` ke serverless function untuk itu.
