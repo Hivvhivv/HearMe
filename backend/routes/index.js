@@ -57,6 +57,10 @@ export function authRoutes() {
   r.post("/register", Security.auth(), c.handle(c.register));
   r.post("/login", Security.auth(), c.handle(c.login));
 
+  // Lupa password. Limiter sendiri: lihat Security.passwordReset().
+  r.post("/forgot-password", Security.passwordReset(), c.handle(c.forgotPassword));
+  r.post("/reset-password", Security.passwordReset(), c.handle(c.resetPassword));
+
   // Tanpa authenticate: access token bisa saja sudah
   // kedaluwarsa, tapi refresh & logout harus tetap bisa.
   r.post("/refresh", c.handle(c.refresh));

@@ -168,6 +168,10 @@ Vercel -> Settings -> Environment Variables (Production + Preview):
 | `REFRESH_TOKEN_TTL_DAYS` | `30` | |
 | `REFRESH_GRACE_SECONDS` | `10` | toleransi refresh paralel |
 | `CORS_ORIGINS` | **kosongkan** | lihat catatan di bawah |
+| `SMTP_USER` | alamat Gmail pengirim | untuk email lupa password |
+| `SMTP_PASS` | App Password Gmail 16 karakter | bukan password akun; buat di myaccount.google.com/apppasswords |
+| `APP_URL` | **kosongkan** | tautan reset memakai domain production project; isi hanya kalau pakai domain sendiri |
+| `BLOB_READ_WRITE_TOKEN` | otomatis dari Vercel Blob | lihat Penyebab 5 |
 | `VITE_API_URL` | **jangan dibuat** | lihat Penyebab 2 |
 
 ### Password Atlas wajib di-percent-encode

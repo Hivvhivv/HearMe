@@ -20,6 +20,7 @@ import { userService } from "../services/UserService.js";
 import { sessionService } from "../services/SessionService.js";
 import { tokenService } from "../services/TokenService.js";
 import { cookieService } from "../http/CookieService.js";
+import { passwordResetService } from "../services/PasswordResetService.js";
 import { UserService } from "../services/UserService.js";
 
 export class AuthController extends BaseController {
@@ -27,7 +28,8 @@ export class AuthController extends BaseController {
     users = userService,
     sessions = sessionService,
     tokens = tokenService,
-    cookies = cookieService
+    cookies = cookieService,
+    passwordResets = passwordResetService
   } = {}) {
     super();
 
@@ -35,6 +37,7 @@ export class AuthController extends BaseController {
     this.sessions = sessions;
     this.tokens = tokens;
     this.cookies = cookies;
+    this.passwordResets = passwordResets;
   }
 
 
@@ -48,6 +51,43 @@ export class AuthController extends BaseController {
         req.socket?.remoteAddress ||
         "unknown"
     };
+  }
+
+
+  // ====================================================
+  // POST /forgot-password
+  // ====================================================
+  //
+  // Balasannya SAMA untuk email terdaftar maupun tidak.
+  //
+  // ====================================================
+
+  async forgotPassword(req, res) {
+    await this.passwordResets.request(req.body?.email);
+
+    return this.legacy(res, {
+      message:
+        "Kalau email itu terdaftar, tautan reset password sudah dikirim."
+    });
+  }
+
+
+  // ====================================================
+  // POST /reset-password
+  // ====================================================
+
+  async resetPassword(req, res) {
+    const { token, password } = req.body || {};
+
+    await this.passwordResets.reset(token, password);
+
+    // Session sudah dicabut di server; cookie di browser
+    // ini ikut dibersihkan.
+    this.cookies.clear(res);
+
+    return this.legacy(res, {
+      message: "Password berhasil diubah. Silakan login."
+    });
   }
 
 

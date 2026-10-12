@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Lock, User, Eye, EyeOff, Brain } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 
@@ -206,6 +206,12 @@ export default function AdminLoginPage() {
           >
             Gunakan akun admin terdaftar. Akses ditentukan oleh
             role pada database.
+          </p>
+
+          <p className="mt-3 text-xs text-center">
+            <Link to="/forgot-password" className="text-[#6F3FB5] font-semibold hover:underline">
+              Lupa password?
+            </Link>
           </p>
         </div>
       </div>

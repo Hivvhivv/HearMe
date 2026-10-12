@@ -273,6 +273,16 @@ export class Database {
     await idx("sessions", { expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 
+    // ---------------- PASSWORD RESETS ----------------
+    //
+    // Token lupa password (hanya hash-nya). TTL menghapus
+    // yang kedaluwarsa secara otomatis.
+
+    await idx("password_resets", { tokenHash: 1 }, { unique: true });
+    await idx("password_resets", { userId: 1 });
+    await idx("password_resets", { expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+
     // ---------------- PSYCHOLOGISTS ----------------
     //
     // Field `id` adalah sisa dump mockData dan TIDAK ada

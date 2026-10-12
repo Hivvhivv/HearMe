@@ -659,6 +659,31 @@ export class UserService extends BaseService {
   }
 
 
+  /*
+   * Mengganti password TANPA memeriksa password lama.
+   *
+   * Hanya untuk alur yang sudah membuktikan kepemilikan
+   * akun dengan cara lain (PasswordResetService, lewat
+   * token dari email). Jangan dipanggil dari controller.
+   */
+  async setPassword(userId, newPassword) {
+    const users = await this.users();
+
+    await users.updateOne(
+      { _id: new ObjectId(userId) },
+      {
+        $set: {
+          passwordHash: await bcrypt.hash(
+            newPassword,
+            BCRYPT_ROUNDS
+          ),
+          updatedAt: BaseService.now()
+        }
+      }
+    );
+  }
+
+
   // ====================================================
   // PROFIL PROFESIONAL PSIKOLOG
   // ====================================================

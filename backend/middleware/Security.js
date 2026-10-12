@@ -125,6 +125,30 @@ export class Security {
   }
 
 
+  /*
+   * Lupa password.
+   *
+   * Tidak bisa memakai auth(): endpoint ini SELALU membalas
+   * sukses (supaya tidak membocorkan email mana yang
+   * terdaftar), dan auth() tidak menghitung request yang
+   * sukses -- jadi tidak akan pernah membatasi apa pun.
+   */
+  static passwordReset() {
+    return Security.base({
+      windowMs: 15 * 60 * 1000,
+      limit: 5,
+
+      keyGenerator: (req) => {
+        const email = String(req.body?.email || "")
+          .trim()
+          .toLowerCase();
+
+        return `${ipKey(req)}|${email}`;
+      }
+    });
+  }
+
+
   // Endpoint yang menulis file (base64 besar) dibatasi
   // lebih ketat.
   static upload() {

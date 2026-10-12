@@ -125,6 +125,36 @@ export const authAPI = {
 
 
   // ====================================================
+  // LUPA PASSWORD
+  // ====================================================
+  //
+  // Backend membalas sama untuk email terdaftar maupun
+  // tidak, jadi sukses di sini BUKAN bukti emailnya ada.
+  //
+  // ====================================================
+
+  forgotPassword: async (email: string): Promise<void> => {
+    await api.post(
+      "/auth/forgot-password",
+      { email },
+      { skipAuth: true }
+    );
+  },
+
+  // token berasal dari tautan di email.
+  resetPassword: async (
+    token: string,
+    password: string
+  ): Promise<void> => {
+    await api.post(
+      "/auth/reset-password",
+      { token, password },
+      { skipAuth: true }
+    );
+  },
+
+
+  // ====================================================
   // LOGOUT
   // ====================================================
   //

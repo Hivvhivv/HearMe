@@ -4,6 +4,8 @@ import SplashScreen from "./pages/SplashScreen";
 import LandingPage from "./pages/LandingPage";
 import AboutPage from "./pages/AboutPage";
 import SignInPage from "./pages/SignInPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
 import ChooseRolePage from "./pages/ChooseRolePage";
 import SignUpPage from "./pages/SignUpPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -191,6 +193,8 @@ export default function App() {
         <Route path="/features" element={<LandingPage />} />
         <Route path="/contact" element={<LandingPage />} />
         <Route path="/sign-in" element={<SignInPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/choose-role" element={<ChooseRolePage />} />
         <Route path="/sign-up/:role" element={<SignUpPage />} />
         <Route path="/privacy-policy" element={<PrivacyPage />} />
