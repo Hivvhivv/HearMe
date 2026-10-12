@@ -5,6 +5,7 @@ import PsychologistNavbar from "../../components/PsychologistNavbar";
 import Footer from "../../components/Footer";
 import { useAuth } from "../../contexts/AuthContext";
 import { userAPI } from "../../api/user.api";
+import AvatarDialog from "../../components/AvatarDialog";
 
 interface PsychologistProfile {
   id?: string;
@@ -21,7 +22,7 @@ interface PsychologistProfile {
 export default function PsychologistProfilePage() {
   const navigate = useNavigate();
 
-  const { logout: doLogout } = useAuth();
+  const { logout: doLogout, reload } = useAuth();
 
   const [user, setUser] =
     useState<PsychologistProfile | null>(null);
@@ -30,6 +31,7 @@ export default function PsychologistProfilePage() {
     useState<PsychologistProfile | null>(null);
 
   const [editing, setEditing] = useState(false);
+  const [avatarOpen, setAvatarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -57,7 +59,7 @@ useEffect(() => {
         experience: me.psychologistProfile?.experience || "",
         price: me.psychologistProfile?.price || "",
         bio: me.psychologistProfile?.bio || "",
-        avatar: me.psychologistProfile?.avatar || "",
+        avatar: me.psychologistProfile?.avatar || me.avatar || "",
       };
 
       setUser(profile);
@@ -244,6 +246,9 @@ useEffect(() => {
 
               <button
                 type="button"
+                onClick={() => setAvatarOpen(true)}
+                aria-label="Ganti avatar"
+                title="Ganti avatar"
                 className="absolute bottom-0 right-0 w-8 h-8 bg-[#6F3FB5] text-white rounded-full flex items-center justify-center shadow-md hover:bg-purple-800 transition-colors"
               >
                 <Camera size={14} />
@@ -545,6 +550,22 @@ useEffect(() => {
         )}
 
       </div>
+
+      {avatarOpen && (
+        <AvatarDialog
+          name={user.name}
+          current={user.avatar}
+          onClose={() => setAvatarOpen(false)}
+          onSaved={async (avatar) => {
+            setUser((u) => (u ? { ...u, avatar } : u));
+            setForm((f) => (f ? { ...f, avatar } : f));
+            setAvatarOpen(false);
+
+            // Segarkan state auth global supaya navbar ikut berubah.
+            await reload();
+          }}
+        />
+      )}
 
       <Footer />
     </div>

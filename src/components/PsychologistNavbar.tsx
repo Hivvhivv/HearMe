@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import Logo from "./Logo";
 import { useAuth } from "../contexts/AuthContext";
+import UserAvatar from "./UserAvatar";
 
 type VerificationStatus =
   | "pending"
@@ -271,9 +272,7 @@ export default function PsychologistNavbar() {
               }
               className="flex items-center gap-2 px-3 py-1.5 rounded-xl hover:bg-[#F5EEFC] transition-colors"
             >
-              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-300 to-[#6F3FB5] flex items-center justify-center text-white text-xs font-bold">
-                {name[0]?.toUpperCase()}
-              </div>
+              <UserAvatar src={user?.avatar as string | undefined} name={name} className="w-7 h-7 text-xs" />
 
               <span className="text-sm font-semibold text-gray-700">
                 {name}

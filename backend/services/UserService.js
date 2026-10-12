@@ -536,7 +536,7 @@ export class UserService extends BaseService {
       { $set: { avatar, updatedAt: BaseService.now() } },
       {
         returnDocument: "before",
-        projection: { avatar: 1 }
+        projection: { avatar: 1, role: 1 }
       }
     );
 
@@ -556,6 +556,37 @@ export class UserService extends BaseService {
       // remove() hanya menyentuh berkas di /uploads, jadi
       // avatar preset lama aman diabaikan.
       await this.uploads.remove(previous.avatar);
+    }
+
+    // Foto psikolog yang dilihat pasien (daftar psikolog,
+    // konsultasi) dibaca dari profil profesionalnya, jadi
+    // disamakan di sana juga.
+    if (previous.role === "psychologist") {
+      const profiles = await this.profiles();
+      const now = BaseService.now();
+
+      const profileBefore = BaseService.unwrap(
+        await profiles.findOneAndUpdate(
+          { userId: _id },
+          {
+            $set: { avatar, updatedAt: now },
+            $setOnInsert: { userId: _id, createdAt: now }
+          },
+          {
+            upsert: true,
+            returnDocument: "before",
+            projection: { avatar: 1 }
+          }
+        )
+      );
+
+      if (
+        profileBefore?.avatar &&
+        profileBefore.avatar !== avatar &&
+        profileBefore.avatar !== previous.avatar
+      ) {
+        await this.uploads.remove(profileBefore.avatar);
+      }
     }
 
     return this.getProfile(userId);

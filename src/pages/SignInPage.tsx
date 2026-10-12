@@ -59,7 +59,15 @@ export default function SignInPage() {
       return <Navigate to="/admin/dashboard" replace />;
     }
 
-    return <Navigate to="/dashboard" replace />;
+    // Blok ini ter-render begitu login() mengisi state auth,
+    // SEBELUM navigate() di handleSubmit jalan -- jadi tujuan
+    // welcome harus diputuskan di sini juga.
+    return (
+      <Navigate
+        to={user && needsWelcome(user) ? "/welcome" : "/dashboard"}
+        replace
+      />
+    );
   }
 
   // ======================================================

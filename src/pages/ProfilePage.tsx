@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Camera, Edit2, Key, LogOut, X } from "lucide-react";
+import { Camera, Edit2, Key, LogOut } from "lucide-react";
 import DashboardNavbar from "../components/DashboardNavbar";
 import Footer from "../components/Footer";
 import { useAuth } from "../contexts/AuthContext";
 import { userAPI, type ProfileUser } from "../api/user.api";
 import UserAvatar from "../components/UserAvatar";
-import AvatarPicker from "../components/AvatarPicker";
-import type { AvatarChoice } from "../lib/avatars";
+import AvatarDialog from "../components/AvatarDialog";
 
 // ======================================================
 // FORM <-> API FIELD MAPPING
@@ -58,9 +57,6 @@ export default function ProfilePage() {
   // lewat endpoint sendiri (PUT /api/users/me/avatar).
   const [avatar, setAvatar] = useState("");
   const [avatarOpen, setAvatarOpen] = useState(false);
-  const [avatarChoice, setAvatarChoice] = useState<AvatarChoice | null>(null);
-  const [avatarSaving, setAvatarSaving] = useState(false);
-  const [avatarError, setAvatarError] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -144,39 +140,14 @@ export default function ProfilePage() {
     }
   };
 
-  // ====================================================
-  // GANTI AVATAR
-  // ====================================================
+  // Dipanggil AvatarDialog setelah avatar tersimpan.
+  const onAvatarSaved = async (next: string) => {
+    setAvatar(next);
+    setAvatarOpen(false);
+    setSuccess("Avatar berhasil diperbarui");
 
-  const openAvatar = () => {
-    setAvatarChoice(null);
-    setAvatarError("");
-    setAvatarOpen(true);
-  };
-
-  const saveAvatar = async () => {
-    if (!avatarChoice) return;
-
-    try {
-      setAvatarSaving(true);
-      setAvatarError("");
-
-      const updated = await userAPI.updateAvatar(avatarChoice);
-
-      setAvatar(updated.avatar || "");
-      setAvatarOpen(false);
-      setSuccess("Avatar berhasil diperbarui");
-
-      await reload();
-    } catch (err) {
-      setAvatarError(
-        err instanceof Error
-          ? err.message
-          : "Gagal menyimpan avatar"
-      );
-    } finally {
-      setAvatarSaving(false);
-    }
+    // Segarkan state auth global supaya navbar ikut berubah.
+    await reload();
   };
 
   const logout = async () => {
@@ -262,7 +233,7 @@ export default function ProfilePage() {
             <div className="relative">
               <UserAvatar src={avatar} name={user.name} className="w-24 h-24 text-3xl shadow-lg" />
               <button
-                onClick={openAvatar}
+                onClick={() => setAvatarOpen(true)}
                 aria-label="Ganti avatar"
                 title="Ganti avatar"
                 className="absolute bottom-0 right-0 w-8 h-8 bg-[#6F3FB5] text-white rounded-full flex items-center justify-center shadow-md hover:bg-purple-800 transition-colors"
@@ -361,60 +332,13 @@ export default function ProfilePage() {
           </div>
         )}
       </div>
-      {/* Modal ganti avatar */}
       {avatarOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => !avatarSaving && setAvatarOpen(false)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="Ganti avatar"
-            className="bg-white rounded-3xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 animate-scale-in"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-bold text-gray-900">Ganti Avatar</h3>
-              <button
-                onClick={() => setAvatarOpen(false)}
-                disabled={avatarSaving}
-                aria-label="Tutup"
-                className="p-1.5 rounded-lg text-gray-400 hover:bg-[#F5EEFC] hover:text-[#6F3FB5] transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <AvatarPicker
-              name={user.name}
-              current={avatar}
-              value={avatarChoice}
-              onChange={setAvatarChoice}
-            />
-
-            {avatarError && (
-              <p className="mt-4 text-sm text-red-500 text-center">{avatarError}</p>
-            )}
-
-            <div className="mt-6 flex gap-3">
-              <button
-                onClick={() => setAvatarOpen(false)}
-                disabled={avatarSaving}
-                className="flex-1 border border-purple-100 text-gray-600 font-semibold py-2.5 rounded-xl hover:bg-[#F5EEFC] transition-colors text-sm"
-              >
-                Batal
-              </button>
-              <button
-                onClick={saveAvatar}
-                disabled={!avatarChoice || avatarSaving}
-                className="flex-1 bg-[#6F3FB5] text-white font-semibold py-2.5 rounded-xl hover:bg-purple-800 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {avatarSaving ? "Menyimpan..." : "Simpan"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <AvatarDialog
+          name={user.name}
+          current={avatar}
+          onClose={() => setAvatarOpen(false)}
+          onSaved={onAvatarSaved}
+        />
       )}
 
       <Footer />
